@@ -1679,16 +1679,16 @@ namespace RfidDrivers.First
                 UInt32 nTagCount = 0;
                 int ret = tag_inventory(
                     hreader,
-                       ai_type,
-                       1,
-                       new Byte[] { 1 },
-                         ref nTagCount,
-                         out List<InventoryInfo> results);
+                    ai_type,
+                    1,
+                    new Byte[] { 1 },
+                    ref nTagCount,
+                    out List<InventoryInfo> results);
                 if (ret != 0)
                     return new InventoryResult
                     {
                         Value = -1,
-                        ErrorInfo = "error",
+                        ErrorInfo = "Inventory() error",
                         ErrorCode = GetErrorCode(ret, hreader)
                     };
 
@@ -1960,7 +1960,7 @@ namespace RfidDrivers.First
                                 return new FindTagResult
                                 {
                                     Value = -1,
-                                    ErrorInfo = "error",
+                                    ErrorInfo = "ISO15693_GetSystemInfo() error 1",
                                     ErrorCode = GetErrorCode(iret, hreader)
                                 };
 
@@ -2680,7 +2680,7 @@ namespace RfidDrivers.First
                         return new GetTagInfoResult
                         {
                             Value = -1,
-                            ErrorInfo = "error",
+                            ErrorInfo = "ISO15693_GetSystemInfo() error 2",
                             ErrorCode = GetErrorCode(iret, hreader)
                         };
 
@@ -2865,7 +2865,7 @@ namespace RfidDrivers.First
                             //tagReportHandler(hreader, aip_id, tag_id, ant_id, uid ,8);
                             InventoryInfo result = new InventoryInfo
                             {
-                                Protocol = "ISO15693",
+                                Protocol = InventoryInfo.ISO15693,
                                 AipID = aip_id,
                                 TagType = tag_id,
                                 AntennaID = ant_id,
@@ -2899,7 +2899,7 @@ namespace RfidDrivers.First
 
                             InventoryInfo result = new InventoryInfo
                             {
-                                Protocol = "ISO14443A",
+                                Protocol = InventoryInfo.ISO14443A,
                                 AipID = aip_id,
                                 TagType = tag_id,
                                 AntennaID = ant_id,
