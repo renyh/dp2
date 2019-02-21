@@ -90,8 +90,6 @@ namespace dp2SSL
                 {
                     errors.Add("ClearMessage Exception: " + ex.Message);
                 }
-
-
             }
 
             if (string.IsNullOrEmpty(App.CurrentApp.RfidUrl) == false)
@@ -232,6 +230,14 @@ namespace dp2SSL
 
         // uid --> TagInfo
         Hashtable _tagTable = new Hashtable();
+
+        public void ClearTagTable(string uid)
+        {
+            if (string.IsNullOrEmpty(uid))
+                _tagTable.Clear();
+            else
+                _tagTable.Remove(uid);
+        }
 
         // 从缓存中获取标签信息
         GetTagInfoResult GetTagInfo(RfidChannel channel, string uid)
@@ -984,6 +990,7 @@ out string strError);
 #endif
             try
             {
+                this.ClearTagTable(uid);
                 return _rfidChannel.Object.SetEAS("*", $"uid:{uid}", enable);
             }
             catch (Exception ex)
