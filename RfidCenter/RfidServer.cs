@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -39,6 +40,9 @@ namespace RfidCenter
             InventoryResult result = new InventoryResult();
             List<OneTag> tags = new List<OneTag>();
 
+            // uid --> Driver Name
+            Hashtable uid_table = new Hashtable();
+
             foreach (Reader reader in Program.Rfid.Readers)
             {
                 if (reader_name == "*" || reader.Name == reader_name)
@@ -56,6 +60,10 @@ namespace RfidCenter
 
                 foreach (InventoryInfo info in inventory_result.Results)
                 {
+                    if (uid_table.ContainsKey(info.UID))
+                        continue;
+                    uid_table[info.UID] = reader.Name;
+
                     var tag = new OneTag
                     {
                         Protocol = info.Protocol,
@@ -172,7 +180,7 @@ namespace RfidCenter
             if (errors.Count > 0)
                 return errors[0];
 
-            return new GetTagInfoResult { ErrorCode = "notFoundReader"};
+            return new GetTagInfoResult { ErrorCode = "notFoundReader" };
         }
 
         public NormalResult WriteTagInfo(
@@ -308,7 +316,7 @@ enable);
             // 触发通知动作
             // TODO: 通知以后，最好把标签内容信息给存储起来，这样 Inventory 的时候可以直接使用
             if (_sendKeyEnabled.Value == true)
-                Notify(tag.ReaderName, tag.UID);
+                Notify(tag.ReaderName, tag.UID, tag.Protocol);
             return true;
         }
 
@@ -368,14 +376,14 @@ enable);
             }
         }
 
-        void Notify(string reader_name, string uid)
+        void Notify(string reader_name, string uid, string protocol)
         {
             Task.Run(() =>
             {
                 bool succeed = false;
                 for (int i = 0; i < 10; i++)
                 {
-                    succeed = NotifyTag(reader_name, uid);
+                    succeed = NotifyTag(reader_name, uid, protocol);
                     if (succeed == true)
                         break;
                     Thread.Sleep(100);
@@ -396,10 +404,15 @@ enable);
             else
                 this._sendKeyEnabled.TrueToFalse();
 
+            string message = "";
             if (enable)
-                Program.MainForm.OutputHistory("SendKey 打开", 0);
+                message = "SendKey 打开";
             else
-                Program.MainForm.OutputHistory("SendKey 关闭", 0);
+                message = "SendKey 关闭";
+            Program.MainForm.OutputHistory(message, 0);
+
+            Program.MainForm?.Speak(message);
+
             return new NormalResult();
         }
 
@@ -448,6 +461,8 @@ enable);
             bool bFirst = true;
             try
             {
+                // uid --> Driver Name
+                // Hashtable uid_table = new Hashtable();
                 while (_cancelInventory.IsCancellationRequested == false)
                 {
                     await Task.Delay(200, _cancelInventory.Token).ConfigureAwait(false);
@@ -456,6 +471,7 @@ enable);
                     //if (_captureEnabled.Value == false)
                     //    continue;
 
+                    // uid_table.Clear();
                     foreach (Reader reader in Program.Rfid.Readers)
                     {
                         if (reader == null)
@@ -475,6 +491,9 @@ enable);
 
                         foreach (InventoryInfo info in inventory_result.Results)
                         {
+                            //if (uid_table.ContainsKey(info.UID))
+                            //    continue;
+                            //uid_table[info.UID] = reader.Name;
                             AddToTagList(reader.Name, info.UID, info.DsfID, info.Protocol);
                         }
                     }
@@ -491,10 +510,22 @@ enable);
             }
         }
 
-        bool NotifyTag(string reader_name, string uid)
+        bool NotifyTag(string reader_name, string uid, string protocol)
         {
             if (_sendKeyEnabled.Value == false)
                 return false;
+
+            // 2019/2/24
+            if (protocol == InventoryInfo.ISO14443A)
+            {
+                Program.MainForm.Invoke((Action)(() =>
+                {
+                    // 发送 UID
+                    SendKeys.SendWait($"uid:{uid},tou:80\r");
+                }));
+                Program.MainForm?.Speak("发送");
+                return true;
+            }
 
             InventoryInfo info = new InventoryInfo { UID = uid };
             GetTagInfoResult result0 = Program.Rfid.GetTagInfo(reader_name, info);
@@ -525,6 +556,7 @@ enable);
                 // 发送 UID
                 SendKeys.SendWait($"{text}\r");
             }));
+            Program.MainForm?.Speak("发送");
 
             return true;
         }

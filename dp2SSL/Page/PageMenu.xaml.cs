@@ -13,6 +13,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 
+using DigitalPlatform.Text;
+
 namespace dp2SSL
 {
     /// <summary>
@@ -33,13 +35,17 @@ namespace dp2SSL
         {
             Window window = Application.Current.MainWindow;
 
-            window.WindowStyle = WindowStyle.None;
-            window.ResizeMode = ResizeMode.NoResize;
             window.Left = 0;
             window.Top = 0;
-            window.Width = SystemParameters.VirtualScreenWidth;
-            window.Height = SystemParameters.VirtualScreenHeight;
-            // window.Topmost = true;
+            if (StringUtil.IsDevelopMode() == false)
+            {
+                window.WindowStyle = WindowStyle.None;
+                window.ResizeMode = ResizeMode.NoResize;
+                window.Width = SystemParameters.VirtualScreenWidth;
+                window.Height = SystemParameters.VirtualScreenHeight;
+            }
+
+            this.message.Text = $"dp2SSL 版本号:\r\n{WpfClientInfo.ClientVersion}";
         }
 
         private void Button_Borrow_Click(object sender, RoutedEventArgs e)
@@ -57,6 +63,13 @@ namespace dp2SSL
         {
             //Window cfg_window = new ConfigWindow();
             //cfg_window.ShowDialog();
+
+            // 测试用
+            if (Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                System.Windows.Application.Current.Shutdown();
+                return;
+            }
             this.NavigationService.Navigate(new PageSetting());
         }
 
