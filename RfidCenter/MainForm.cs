@@ -26,6 +26,7 @@ using DigitalPlatform.CirculationClient;
 using DigitalPlatform.IO;
 using DigitalPlatform.Text;
 using System.Speech.Synthesis;
+using log4net;
 
 namespace RfidCenter
 {
@@ -68,7 +69,15 @@ namespace RfidCenter
             }
 
             ClientInfo.Initial("rfidcenter");
-
+            {
+                Driver1Manager.Log = LogManager.GetLogger("main", "driver1");
+                /*
+                _log = LogManager.GetLogger("main",
+                    product_name
+                    // "fingerprintcenter"
+                    );
+                    */
+            }
             ClearHtml();
 
             // 显示版本号
@@ -130,8 +139,8 @@ namespace RfidCenter
             {
                 if (this.checkBox_cfg_savePasswordLong.Checked == false)
                     this.textBox_cfg_password.Text = "";
-                ClientInfo.Config.Set("global", "ui_state", this.UiState);
-                ClientInfo.Config.Set("global", "replication_start", this.textBox_replicationStart.Text);
+                ClientInfo.Config?.Set("global", "ui_state", this.UiState);
+                ClientInfo.Config?.Set("global", "replication_start", this.textBox_replicationStart.Text);
                 ClientInfo.Finish();
             }
 
@@ -1165,7 +1174,7 @@ string strHtml)
 #endif
 
         // 2 秒内多次到来的请求，会被合并为一次执行
-        void BeginRefreshReaders()
+        public void BeginRefreshReaders()
         {
             lock (_syncRoot_refresh)
             {
@@ -1174,7 +1183,7 @@ string strHtml)
                     _refreshTimer = new System.Threading.Timer(
             new System.Threading.TimerCallback(refreshTimerCallback),
             null,
-            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
                 }
             }
         }
@@ -1260,7 +1269,7 @@ string strHtml)
             }
 
             {
-                NormalResult result = _driver.SetConfig("*", "beep:-,mode:host");
+                NormalResult result = _driver.SetConfig("*", "beep:-,mode:host,autoCloseRF:-");
                 if (result.Value == -1)
                 {
                     strError = result.ErrorInfo;
@@ -1295,6 +1304,30 @@ string strHtml)
         SpeechSynthesizer m_speech = new SpeechSynthesizer();
         string m_strSpeakContent = "";
 
+        /*
+操作类型 crashReport -- 异常报告 
+主题 rfidcenter 
+媒体类型 text 
+内容 发生未捕获的界面线程异常: 
+Type: System.Runtime.InteropServices.COMException
+Message: 检索 COM 类工厂中 CLSID 为 {D9F6EE60-58C9-458B-88E1-2F908FD7F87C} 的组件失败，原因是出现以下错误: 80040154 没有注册类 (异常来自 HRESULT:0x80040154 (REGDB_E_CLASSNOTREG))。
+Stack:
+在 System.Speech.Internal.ObjectTokens.RegistryDataKey..ctor(String fullPath, IntPtr regHandle)
+在 System.Speech.Internal.ObjectTokens.RegistryDataKey.Open(String registryPath, Boolean fCreateIfNotExist)
+在 System.Speech.Internal.ObjectTokens.SAPICategories.DefaultDeviceOut()
+在 System.Speech.Internal.Synthesis.VoiceSynthesis..ctor(WeakReference speechSynthesizer)
+在 System.Speech.Synthesis.SpeechSynthesizer.get_VoiceSynthesizer()
+在 System.Speech.Synthesis.SpeechSynthesizer.SpeakAsyncCancelAll()
+在 RfidCenter.MainForm.<>c__DisplayClass76_0.<Speak>b__0()
+
+
+rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKeyToken=null
+操作系统：Microsoft Windows NT 6.1.7601 Service Pack 1
+本机 MAC 地址: xxx 
+操作时间 2019/3/23 11:57:32 (Sat, 23 Mar 2019 11:57:32 +0800) 
+前端地址 xxx 经由 http://dp2003.com/dp2library 
+
+         * */
         public void Speak(string strText, bool bError = false)
         {
 #if NO
@@ -1312,10 +1345,17 @@ string strHtml)
                 return;
 
             this.m_strSpeakContent = strText;
-            this.Invoke((Action)(() =>
+            this.BeginInvoke((Action)(() =>
             {
-                this.m_speech.SpeakAsyncCancelAll();
-                this.m_speech.SpeakAsync(strText);
+                try
+                {
+                    this.m_speech.SpeakAsyncCancelAll();
+                    this.m_speech.SpeakAsync(strText);
+                }
+                catch(System.Runtime.InteropServices.COMException)
+                {
+                    // TODO: 如何报错?
+                }
             }));
         }
 
@@ -1330,6 +1370,58 @@ string strHtml)
                     return this.checkBox_speak.Checked;
                 }));
 #endif
+            }
+        }
+
+        private void MenuItem_writePassword_Click(object sender, EventArgs e)
+        {
+            string strError = "";
+
+            var inventory_result = m_rfidObj.ListTags("*", "");
+            if (inventory_result.Value == -1)
+            {
+                strError = "inventory() error: " + inventory_result.ErrorInfo;
+                goto ERROR1;
+            }
+
+            string strOldPassword = InputDlg.GetInput(this, "", "old password(纯数字)", "");
+            if (strOldPassword == null)
+                return;
+            if (uint.TryParse(strOldPassword, out uint old_password) == false)
+            {
+                strError = $"old_password '{strOldPassword}' 不合法";
+                goto ERROR1;
+            }
+
+            string strNewPassword = InputDlg.GetInput(this, "", "new password(纯数字)", "");
+            if (strNewPassword == null)
+                return;
+            if (uint.TryParse(strNewPassword, out uint new_password) == false)
+            {
+                strError = $"new_password '{strNewPassword}' 不合法";
+                goto ERROR1;
+            }
+
+            var result = m_rfidObj.ChangePassword("*",
+                inventory_result.Results[0].UID, 
+                "eas/afi", 
+                old_password, 
+                new_password);
+            MessageDlg.Show(this, $"result:{result.ToString()}", "result");
+            return;
+            ERROR1:
+            MessageBox.Show(this, strError);
+        }
+
+        private void MenuItem_openUserFolder_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(ClientInfo.UserDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ExceptionUtil.GetAutoText(ex));
             }
         }
     }

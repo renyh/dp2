@@ -39,6 +39,7 @@ using DigitalPlatform.MarcDom;
 using DigitalPlatform.MessageClient;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
+using static dp2Circulation.MyForm;
 
 namespace dp2Circulation
 {
@@ -5262,6 +5263,9 @@ dlg.TempCode);
 
         void AutoStartDp2libraryXE()
         {
+            if (ApplicationDeployment.IsNetworkDeployed == false)
+                return; // TODO: 以后尝试增加自动启动绿色版的方法
+
             string strShortcutFilePath = PathUtil.GetShortcutFilePath("DigitalPlatform/dp2 V3/dp2Library XE V3");
             if (File.Exists(strShortcutFilePath) == false)
             {
@@ -7428,6 +7432,8 @@ out strError);
         {
             get
             {
+                if (this.AppInfo == null)
+                    return "";
                 return this.AppInfo.GetString("fingerprint",
                     "fingerPrintReaderUrl",
                     "");  // 常用值 "ipc://FingerprintChannel/FingerprintServer"
@@ -8230,7 +8236,8 @@ Keys keyData)
 
                         // 临时库或中央库
                         if (StringUtil.IsInList("catalogWork", prop.Role) == true
-                            || StringUtil.IsInList("catalogTarget", prop.Role) == true)
+                            || StringUtil.IsInList("catalogTarget", prop.Role) == true
+                            || StringUtil.IsInList("biblioSource", prop.Role) == true)
                         {
                             XmlElement database = dom.CreateElement("database");
                             server.AppendChild(database);
@@ -8270,7 +8277,11 @@ Keys keyData)
                             }
 
                             database.SetAttribute("name", prop.DbName);
-                            database.SetAttribute("isTarget", "yes");
+                            if (string.IsNullOrEmpty(strEntityAccess)
+                                || StringUtil.IsInList("biblioSource", prop.Role) == true)  // 2019/3/13
+                                database.SetAttribute("isTarget", "no");
+                            else
+                                database.SetAttribute("isTarget", "yes");
                             database.SetAttribute("access", strBiblioAccess);  // "append,overwrite"
 
                             database.SetAttribute("entityAccess", strEntityAccess);    // "append,overwrite"
@@ -8462,6 +8473,30 @@ Keys keyData)
 
         #endregion // servers.xml
 
+        void EnableFingerprintSendKey(bool enable)
+        {
+            if (string.IsNullOrEmpty(Program.MainForm.FingerprintReaderUrl) == true)
+                return;
+
+            FingerprintChannel channel = MyForm.StartFingerprintChannel(
+                this.FingerprintReaderUrl,
+                out string strError);
+            if (channel == null)
+                return;
+            try
+            {
+                channel?.Object?.EnableSendKey(enable);
+            }
+            catch
+            {
+                return;
+            }
+            finally
+            {
+                MyForm.EndFingerprintChannel(channel);
+            }
+        }
+
         private void MainForm_Resize(object sender, EventArgs e)
         {
 
@@ -8469,6 +8504,9 @@ Keys keyData)
 
         private void MainForm_Activated(object sender, EventArgs e)
         {
+            // fingerprint enableSendkey
+            // this.Speak("activated");
+            EnableFingerprintSendKey(true);
 #if NO
             foreach (Form form in this.OwnedForms)
             {
@@ -8483,6 +8521,8 @@ Keys keyData)
 
         private void MainForm_Deactivate(object sender, EventArgs e)
         {
+            // this.Speak("deactivated");
+
 #if NO
             foreach (Form form in this.OwnedForms)
             {
@@ -9372,6 +9412,7 @@ out strError);
         {
             OpenWindow<RfidToolForm>();
         }
+
     }
 
     /// <summary>
