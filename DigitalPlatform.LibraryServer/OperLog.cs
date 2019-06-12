@@ -19,6 +19,20 @@ namespace DigitalPlatform.LibraryServer
     /// </summary>
     public class OperLog
     {
+        // 状态
+        string _state = "disabled";   // 空/disabled
+        public string State
+        {
+            get
+            {
+                return _state;
+            }
+            set
+            {
+                _state = value;
+            }
+        }
+
         public LibraryApplication App = null;
 
         public OperLogFileCache Cache = new OperLogFileCache();
@@ -266,7 +280,6 @@ namespace DigitalPlatform.LibraryServer
             // this.App.HangupReason = HangupReason.None;
             this.App.ClearHangup("OperLogError");
             this.App.WriteErrorLog("系统启动时，发现备用日志文件中有上次紧急写入的日志信息，现已经成功移入当日日志文件。");
-
             return 1;   // 恢复成功
         }
 
@@ -350,6 +363,7 @@ namespace DigitalPlatform.LibraryServer
                 this.m_streamSpare.Seek(0, SeekOrigin.Begin);
 
                 // this._bSmallFileMode = true;    // 测试
+                this._state = "";   // 表示可用了
                 return 0;
             }
             finally
@@ -762,6 +776,11 @@ namespace DigitalPlatform.LibraryServer
             }
         }
 
+        bool IsEnabled()
+        {
+            return string.IsNullOrEmpty(this._state);
+        }
+
         // 向日志文件中写入一条日志记录
         // parameters:
         //      attachment  附件。如果为 null，表示没有附件
@@ -775,6 +794,15 @@ namespace DigitalPlatform.LibraryServer
             this.m_lock.AcquireWriterLock(m_nLockTimeout);
             try
             {
+                if (this.IsEnabled() == false)
+                {
+                    strError = "操作日志系统尚未准备就绪";
+                    // 2019/4/26
+                    this.App?.WriteErrorLog($"WriteEnventLog() error:{strError} strXmlBody:{strXmlBody}");
+                    return -1;
+                }
+
+
                 // 在锁定范围内判断这个布尔变量，比较安全
                 // 在锁定范围外面前部判断，可能会出现锁定中途布尔变量才修改的情况，会遗漏此种情况的处理
                 if (this._bSmallFileMode == true)
@@ -873,7 +901,7 @@ namespace DigitalPlatform.LibraryServer
                 ////Debug.WriteLine("end write lock");
             }
 
-        SMALL_MODE:
+            SMALL_MODE:
             // 小日志文件模式
             // 可以并发，因为文件名已经严格区分了
             {
@@ -1120,7 +1148,8 @@ namespace DigitalPlatform.LibraryServer
             // 1.05 (2017/1/16) CopyBiblioINfo() API 的操作日志增加了 overwritedRecord 元素。记载被覆盖以前的记录内容
             // 1.06 (2017/5/16) 对 ManageDatabase() API 也写入日志了
             // 1.07 (2018/3/7) passgate 日志记录中增加了 readerRefID 元素
-            DomUtil.SetElementText(dom.DocumentElement, "version", "1.07");
+            // 1.08 (2019/4/25) changeReaderPassword 日志此前版本中少了 readerBarcode 和 newPassword 元素。现在补上
+            DomUtil.SetElementText(dom.DocumentElement, "version", "1.08");
 
             if (start_time != new DateTime(0))
             {
@@ -1197,7 +1226,7 @@ namespace DigitalPlatform.LibraryServer
             return 0;
         }
 
-
+        // 注: 这个函数旧版本的缺点是，每次都要重新打开一下文件。新版本改用了 CacheFileItem
         // 原先版本
         // 获得一个日志记录
         // parameters:
@@ -1233,7 +1262,12 @@ namespace DigitalPlatform.LibraryServer
 
             int nRet = 0;
 
+#if OLD
             Stream stream = null;
+#else
+            Stream stream = null;
+            CacheFileItem cache_item = null;
+#endif
 
             if (string.IsNullOrEmpty(this.m_strDirectory) == true)
             {
@@ -1246,11 +1280,17 @@ namespace DigitalPlatform.LibraryServer
 
             try
             {
+
+#if OLD
                 stream = File.Open(
                     strFilePath,
                     FileMode.Open,
                     FileAccess.ReadWrite, // Read会造成无法打开 2007/5/22
                     FileShare.ReadWrite);
+#else
+                cache_item = this.Cache.Open(strFilePath);
+                stream = cache_item.Stream;
+#endif
             }
             catch (FileNotFoundException /*ex*/)
             {
@@ -1396,7 +1436,11 @@ namespace DigitalPlatform.LibraryServer
             }
             finally
             {
+#if OLD
                 stream.Close();
+#else
+                this.Cache.Close(cache_item);
+#endif
             }
         }
 
@@ -2264,7 +2308,7 @@ out strTargetLibraryCode);
                     return -1;
 
                 // 无法限制记录观察范围
-            END1:
+                END1:
                 lHintNext = stream.Position;
 
                 return 1;

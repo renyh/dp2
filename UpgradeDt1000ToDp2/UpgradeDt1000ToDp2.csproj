@@ -11,11 +11,11 @@
     <RootNamespace>UpgradeDt1000ToDp2</RootNamespace>
     <AssemblyName>UpgradeDt1000ToDp2</AssemblyName>
     <IsWebBootstrapper>true</IsWebBootstrapper>
-    <ManifestCertificateThumbprint>458DBD8488B5B2A4FD0653A590D3F6E2BC38DA9F</ManifestCertificateThumbprint>
-    <ManifestKeyFile>dp2003.pfx</ManifestKeyFile>
+    <ManifestCertificateThumbprint>80AE8886E9220471869958BEFAF13962C3FA0319</ManifestCertificateThumbprint>
+    <ManifestKeyFile>代码签名证书-2019.pfx</ManifestKeyFile>
     <GenerateManifests>true</GenerateManifests>
     <SignManifests>true</SignManifests>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileUpgradeFlags>
     </FileUpgradeFlags>
     <OldToolsVersion>2.0</OldToolsVersion>
@@ -174,15 +174,16 @@
     <Compile Include="XmlViewerForm.designer.cs">
       <DependentUpon>XmlViewerForm.cs</DependentUpon>
     </Compile>
+    <None Include="代码签名证书-2019.pfx" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\DigitalPlatform.CirculationClient\DigitalPlatform.CirculationClient.csproj">
       <Project>{397BB898-88E0-41D6-8D01-09233C7FFC75}</Project>
       <Name>DigitalPlatform.CirculationClient</Name>
     </ProjectReference>
-    <ProjectReference Include="..\Digitalplatform.DTLP\Digitalplatform.DTLP.csproj">
+    <ProjectReference Include="..\Digitalplatform.DTLP\DigitalPlatform.DTLP.csproj">
       <Project>{91B90948-8475-4D9B-A3C7-6285EFC45E19}</Project>
-      <Name>Digitalplatform.DTLP</Name>
+      <Name>DigitalPlatform.DTLP</Name>
     </ProjectReference>
     <ProjectReference Include="..\DigitalPlatform.IO\DigitalPlatform.IO.csproj">
       <Project>{441CB814-AF78-4503-91EF-DCE5F3269502}</Project>
@@ -207,6 +208,10 @@
     <ProjectReference Include="..\DigitalPlatform\4.0\DigitalPlatform.csproj">
       <Project>{BDD43275-EAA0-4670-8BA3-0DB5CD7598DD}</Project>
       <Name>DigitalPlatform</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\dp-library\DigitalPlatform.Core\DigitalPlatform.Core.csproj">
+      <Project>{c5b517c1-7344-45a5-89dc-06a9b130ae36}</Project>
+      <Name>DigitalPlatform.Core</Name>
     </ProjectReference>
     <ProjectReference Include="..\UpgradeUtil\UpgradeUtil.csproj">
       <Project>{F4035EC4-076B-47CB-B8F2-D8EEC7AFE56A}</Project>

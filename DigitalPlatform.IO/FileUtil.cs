@@ -1,4 +1,5 @@
 ﻿using AutoIt.Common;
+using DigitalPlatform.Core;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,6 +9,7 @@ using System.Text;
 
 namespace DigitalPlatform.IO
 {
+#if REMOVED
     public static class StreamExtension
     {
         // 带有 Lock/Unlock 的写入操作
@@ -598,4 +600,6 @@ UTF-32 little-endian byte order: FF FE 00 00
             return default_encoding;    // default
         }
     }
+
+#endif
 }

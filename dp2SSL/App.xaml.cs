@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Configuration;
 using System.Data;
 using System.Linq;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using System.Windows;
 
 using DigitalPlatform;
+using DigitalPlatform.Core;
 using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.Text;
@@ -19,12 +21,43 @@ namespace dp2SSL
     /// <summary>
     /// App.xaml 的交互逻辑
     /// </summary>
-    public partial class App : Application
+    public partial class App : Application, INotifyPropertyChanged
     {
         // 主要的通道池，用于当前服务器
         public LibraryChannelPool _channelPool = new LibraryChannelPool();
 
+        CancellationTokenSource _cancelRefresh = new CancellationTokenSource();
+
         Mutex myMutex;
+
+        ErrorTable _errorTable = null;
+
+        #region 属性
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        void OnPropertyChanged(string name)
+        {
+            if (this.PropertyChanged != null)
+                PropertyChanged(this, new PropertyChangedEventArgs(name));
+        }
+
+        private string _error = null;   // "test error line asdljasdkf; ;jasldfjasdjkf aasdfasdf";
+
+        public string Error
+        {
+            get => _error;
+            set
+            {
+                if (_error != value)
+                {
+                    _error = value;
+                    OnPropertyChanged("Error");
+                }
+            }
+        }
+
+        #endregion
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -44,6 +77,11 @@ namespace dp2SSL
                 return;
             }
 
+            _errorTable = new ErrorTable((s) =>
+            {
+                this.Error = s;
+            });
+
             WpfClientInfo.TypeOfProgram = typeof(App);
             if (StringUtil.IsDevelopMode() == false)
                 WpfClientInfo.PrepareCatchException();
@@ -54,11 +92,7 @@ namespace dp2SSL
             this._channelPool.BeforeLogin += new DigitalPlatform.LibraryClient.BeforeLoginEventHandle(Channel_BeforeLogin);
             this._channelPool.AfterLogin += new AfterLoginEventHandle(Channel_AfterLogin);
 
-            List<string> errors = InitialFingerprint();
-            if (errors.Count > 0)
-                AddErrors(errors);
-
-            EnableSendkey(false);
+            // InitialFingerPrint();
 
             // 后台自动检查更新
             Task.Run(() =>
@@ -71,6 +105,45 @@ namespace dp2SSL
                 else if (string.IsNullOrEmpty(result.ErrorInfo) == false)
                     OutputHistory(result.ErrorInfo, 0);
             });
+
+#if REMOVED
+            // 用于重试初始化指纹环境的 Timer
+            // https://stackoverflow.com/questions/13396582/wpf-user-control-throws-design-time-exception
+            _timer = new System.Threading.Timer(
+    new System.Threading.TimerCallback(timerCallback),
+    null,
+    TimeSpan.FromSeconds(10),
+    TimeSpan.FromSeconds(60));
+#endif
+            FingerprintManager.Base.Name = "指纹中心";
+            FingerprintManager.Url = App.FingerprintUrl;
+            FingerprintManager.SetError += FingerprintManager_SetError;
+            FingerprintManager.Start(_cancelRefresh.Token);
+
+            RfidManager.Base.Name = "RFID 中心";
+            RfidManager.Url = App.RfidUrl;
+            RfidManager.SetError += RfidManager_SetError;
+            RfidManager.Start(_cancelRefresh.Token);
+
+            FaceManager.Base.Name = "人脸中心";
+            FaceManager.Url = App.FaceUrl;
+            FaceManager.SetError += FaceManager_SetError; ;
+            FaceManager.Start(_cancelRefresh.Token);
+        }
+
+        private void FaceManager_SetError(object sender, SetErrorEventArgs e)
+        {
+            SetError("face", e.Error);
+        }
+
+        private void RfidManager_SetError(object sender, SetErrorEventArgs e)
+        {
+            SetError("rfid", e.Error);
+        }
+
+        private void FingerprintManager_SetError(object sender, SetErrorEventArgs e)
+        {
+            SetError("fingerprint", e.Error);
         }
 
         // TODO: 如何显示后台任务执行信息? 可以考虑只让管理者看到
@@ -79,15 +152,33 @@ namespace dp2SSL
             // OutputText(DateTime.Now.ToShortTimeString() + " " + strText, nWarningLevel);
         }
 
+        // 注：Windows 关机或者重启的时候，会触发 OnSessionEnding 事件，但不会触发 OnExit 事件
+        protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+        {
+            LibraryChannelManager.Log.Debug("OnSessionEnding() called");
+            WpfClientInfo.Finish();
+            LibraryChannelManager.Log.Debug("End WpfClientInfo.Finish()");
+
+            _cancelRefresh.Cancel();
+
+            base.OnSessionEnding(e);
+        }
+
+        // 注：Windows 关机或者重启的时候，会触发 OnSessionEnding 事件，但不会触发 OnExit 事件
         protected override void OnExit(ExitEventArgs e)
         {
-            EndFingerprint();
+            LibraryChannelManager.Log.Debug("OnExit() called");
+            WpfClientInfo.Finish();
+            LibraryChannelManager.Log.Debug("End WpfClientInfo.Finish()");
+
+            _cancelRefresh.Cancel();
+
+            // EndFingerprint();
 
             this._channelPool.BeforeLogin -= new DigitalPlatform.LibraryClient.BeforeLoginEventHandle(Channel_BeforeLogin);
             this._channelPool.AfterLogin -= new AfterLoginEventHandle(Channel_AfterLogin);
             this._channelPool.Close();
 
-            WpfClientInfo.Finish();
             base.OnExit(e);
         }
 
@@ -124,7 +215,7 @@ namespace dp2SSL
         {
             get
             {
-                return WpfClientInfo.Config.Get("global", "rfidUrl", "");
+                return WpfClientInfo.Config?.Get("global", "rfidUrl", "");
             }
         }
 
@@ -132,7 +223,15 @@ namespace dp2SSL
         {
             get
             {
-                return WpfClientInfo.Config.Get("global", "fingerprintUrl", "");
+                return WpfClientInfo.Config?.Get("global", "fingerprintUrl", "");
+            }
+        }
+
+        public static string FaceUrl
+        {
+            get
+            {
+                return WpfClientInfo.Config?.Get("global", "faceUrl", "");
             }
         }
 
@@ -143,21 +242,6 @@ namespace dp2SSL
                 return DecryptPasssword(WpfClientInfo.Config.Get("global", "dp2Password", ""));
             }
         }
-
-#if NO
-        // 用于锁屏的密码
-        public string LockingPassword
-        {
-            get
-            {
-                return DecryptPasssword(WpfClientInfo.Config.Get("global", "lockingPassword", ""));
-            }
-            set
-            {
-                WpfClientInfo.Config.Set("global", "lockingPassword", EncryptPassword(value));
-            }
-        }
-#endif
 
         public static void SetLockingPassword(string password)
         {
@@ -320,8 +404,12 @@ DigitalPlatform.LibraryClient.BeforeLoginEventArgs e)
 
         protected override void OnActivated(EventArgs e)
         {
-            EnableSendkey(false);
-            // Speak("Activated");
+            // 单独线程执行，避免阻塞 OnActivated() 返回
+            Task.Run(() =>
+            {
+                FingerprintManager.EnableSendkey(false);
+                RfidManager.EnableSendkey(false);
+            });
             base.OnActivated(e);
         }
 
@@ -333,118 +421,27 @@ DigitalPlatform.LibraryClient.BeforeLoginEventArgs e)
 
         #endregion
 
-        List<string> _errors = new List<string>();
-
-        public List<string> Errors
-        {
-            get
-            {
-                return _errors;
-            }
-        }
-
-        public void AddErrors(List<string> errors)
+        public void AddErrors(string type, List<string> errors)
         {
             DateTime now = DateTime.Now;
-            // _errors.AddRange(errors);
-            foreach(string error in errors)
+            List<string> results = new List<string>();
+            foreach (string error in errors)
             {
-                _errors.Add($"{now.ToShortTimeString()} {error}");
+                results.Add($"{now.ToShortTimeString()} {error}");
             }
 
-            while (_errors.Count > 1000)
-            {
-                errors.RemoveAt(0);
-            }
+            _errorTable.SetError(type, StringUtil.MakePathList(results, "; "));
         }
 
-        void EnableSendkey(bool enable)
+        public void SetError(string type, string error)
         {
-            try
-            {
-                if (_fingerprintChannel != null && _fingerprintChannel.Started)
-                    _fingerprintChannel?.Object?.EnableSendKey(enable);
-            }
-            catch
-            {
-                // TODO: 如何显示出错信息？
-            }
+            _errorTable.SetError(type, error);
         }
 
-        public void ClearFingerprintMessage()
+        public void ClearErrors(string type)
         {
-            try
-            {
-                if (_fingerprintChannel != null && _fingerprintChannel.Started)
-                    _fingerprintChannel?.Object?.GetMessage("clear");
-            }
-            catch
-            {
-                // TODO: 如何显示出错信息？
-            }
+            // _errors.Clear();
+            _errorTable.SetError(type, "");
         }
-
-        #region 指纹
-
-        FingerprintChannel _fingerprintChannel = null;
-
-        public FingerprintChannel FingerprintChannel
-        {
-            get
-            {
-                return _fingerprintChannel;
-            }
-        }
-
-        // TODO: 如果没有初始化成功，要提供重试初始化的办法
-        public List<string> InitialFingerprint()
-        {
-            // 准备指纹通道
-            List<string> errors = new List<string>();
-            if (string.IsNullOrEmpty(App.FingerprintUrl) == false
-                && (_fingerprintChannel == null || _fingerprintChannel.Started == false))
-            {
-#if NO
-                eventProxy = new EventProxy();
-                eventProxy.MessageArrived +=
-                  new MessageArrivedEvent(eventProxy_MessageArrived);
-#endif
-                _fingerprintChannel = FingerPrint.StartFingerprintChannel(
-                    App.FingerprintUrl,
-                    out string strError);
-                if (_fingerprintChannel == null)
-                    errors.Add($"启动指纹通道时出错: {strError}");
-                // https://stackoverflow.com/questions/7608826/how-to-remote-events-in-net-remoting
-#if NO
-                _fingerprintChannel.Object.MessageArrived +=
-  new MessageArrivedEvent(eventProxy.LocallyHandleMessageArrived);
-#endif
-                try
-                {
-                    _fingerprintChannel.Object.GetMessage("clear");
-                    _fingerprintChannel.Started = true;
-                }
-                catch (Exception ex)
-                {
-                    if (ex is RemotingException && (uint)ex.HResult == 0x8013150b)
-                        errors.Add($"启动指纹通道时出错: “指纹中心”({App.FingerprintUrl})没有响应");
-                    else
-                        errors.Add($"启动指纹通道时出错(2): {ex.Message}");
-                }
-            }
-
-            return errors;
-        }
-
-        void EndFingerprint()
-        {
-            if (_fingerprintChannel != null)
-            {
-                FingerPrint.EndFingerprintChannel(_fingerprintChannel);
-                _fingerprintChannel = null;
-            }
-        }
-
-        #endregion
     }
 }

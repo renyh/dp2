@@ -40,6 +40,9 @@ using DigitalPlatform.MessageClient;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
 using static dp2Circulation.MyForm;
+using DigitalPlatform.Core;
+using DigitalPlatform.Z3950;
+using DigitalPlatform.LibraryServer.Common;
 
 namespace dp2Circulation
 {
@@ -120,6 +123,12 @@ namespace dp2Circulation
         public string ClientFineInterfaceName = "";
 
         /// <summary>
+        /// 服务器配置的条码校验规则
+        /// library.xml 中 barcodeValication 元素
+        /// </summary>
+        public string BarcodeValidation = "";
+
+        /// <summary>
         /// 从服务器端获取的 CallNumber 配置信息
         /// </summary>
         public XmlDocument CallNumberCfgDom = null;
@@ -157,6 +166,8 @@ namespace dp2Circulation
         /// 为 C# 脚本所准备
         /// </summary>
         public Hashtable ParamTable = new Hashtable();
+
+        public UseCollection UseList = null;
 
         /// <summary>
         /// 快速加拼音对象
@@ -2771,6 +2782,16 @@ false);
                         "default_account",
                         "username",
                         "");
+
+#if NO
+                    // 2019/4/28
+                    LibraryChannel channel = (LibraryChannel)sender;
+                    if (channel != null)
+                    {
+                        channel.UserName = e.UserName;
+                    }
+#endif
+
                     e.Password = AppInfo.GetString(
                         "default_account",
                         "password",
@@ -3659,6 +3680,8 @@ false);
         /// <param name="comboBox_from">ComboBox 对象</param>
         public void FillBiblioFromList(ComboBox comboBox_from)
         {
+            bool include_style = comboBox_from is TabComboBox;
+
             // 保存当前的 Text 值
             string strOldText = comboBox_from.Text;
 
@@ -3677,7 +3700,10 @@ false);
             {
                 BiblioDbFromInfo info = this.BiblioDbFromInfos[i];
 
-                comboBox_from.Items.Add(info.Caption/* + "(" + infos[i].Style+ ")"*/);
+                if (include_style)
+                    comboBox_from.Items.Add(info.Caption + "\t" + info.Style);
+                else
+                    comboBox_from.Items.Add(info.Caption/* + "(" + infos[i].Style+ ")"*/);
 
                 if (i == 0)
                     strFirstItem = info.Caption;
@@ -3690,7 +3716,42 @@ false);
                 comboBox_from.Text = strOldText;
         }
 
+#if NO
+        // 2019/4/20 版本
+        // TabComboBox 版本
+        public void FillBiblioFromList(TabComboBox comboBox_from)
+        {
+            // 保存当前的 Text 值
+            string strOldText = comboBox_from.Text;
 
+            comboBox_from.Items.Clear();
+
+            comboBox_from.Items.Add("<全部>");
+
+            if (this.BiblioDbFromInfos == null)
+                return;
+
+            Debug.Assert(this.BiblioDbFromInfos != null);
+
+            string strFirstItem = "";
+            // 装入检索途径
+            for (int i = 0; i < this.BiblioDbFromInfos.Length; i++)
+            {
+                BiblioDbFromInfo info = this.BiblioDbFromInfos[i];
+
+                comboBox_from.Items.Add(info.Caption + "\t" + info.Style);
+
+                if (i == 0)
+                    strFirstItem = info.Caption;
+            }
+
+            comboBox_from.Text = strFirstItem;
+
+            // 2014/5/20
+            if (string.IsNullOrEmpty(strOldText) == false)
+                comboBox_from.Text = strOldText;
+        }
+#endif
         // 
         /// <summary>
         /// dp2Library 服务器 URL
@@ -3835,7 +3896,7 @@ Stack:
             return -1;
         }
 
-        #region EnsureXXXForm ...
+#region EnsureXXXForm ...
 
         /// <summary>
         /// 获得最顶层的 UtilityForm 窗口，如果没有，则新创建一个
@@ -4123,7 +4184,7 @@ Stack:
             return EnsureChildForm<BiblioStatisForm>();
         }
 
-        #endregion
+#endregion
 
         private void toolButton_borrow_Click(object sender, EventArgs e)
         {
@@ -4852,9 +4913,15 @@ Stack:
         }
 
         // 观察一个特定分馆是否需要变换条码号?
-        public bool NeedTranformBarcode(string strLibraryCode)
+        // return:
+        //      -1  出错
+        //      0   不需要进行变换
+        //      1   需要进行变换
+        public int NeedTranformBarcode(string strLibraryCode, 
+            out string strError)
         {
-            string strError = "";
+            strError = "";
+
             string strBarcode = "?transform";
             // 变换条码号
             // return:
@@ -4865,9 +4932,11 @@ Stack:
                 strLibraryCode,
                 ref strBarcode,
                 out strError);
+            if (nRet == -1)
+                return -1;
             if (nRet == 1)
-                return true;
-            return false;
+                return 1;
+            return 0;
         }
 
         // 变换条码号
@@ -4888,7 +4957,35 @@ Stack:
                 return 0;
             }
 
-            // 优先进行前端校验
+            // 2019/6/1
+            // 优先用服务器传递到前端的条码校验规则来校验
+            if (string.IsNullOrEmpty(this.BarcodeValidation) == false)
+            {
+                try
+                {
+                    var validator = new BarcodeValidator(this.BarcodeValidation);
+                    if (strBarcode == "?transform")
+                        return validator.NeedValidate(strLibraryCode) == true ? 1 : 0;
+
+                    var result = validator.Validate(strLibraryCode, strBarcode);
+                    if (result.OK == false)
+                    {
+                        strError = result.ErrorInfo;
+                        return -1;
+                    }
+                    if (result.Transformed == false)
+                        return 0;
+                    strBarcode = result.TransformedBarcode;
+                    return 1;
+                }
+                catch (Exception ex)
+                {
+                    strError = "前端执行 BarcodeValidation 规则时抛出异常: " + ExceptionUtil.GetDebugText(ex);
+                    return -1;
+                }
+            }
+
+            // 然后尝试进行前端 client.cs 校验
             if (this.ClientHost != null)
             {
                 dynamic o = this.ClientHost;
@@ -5877,6 +5974,56 @@ out strError);
             catch (Exception ex)
             {
                 strError = "装载本地四角号码文件发生错误 :" + ex.Message;
+                return -1;
+            }
+
+            return 1;
+        }
+
+        public int LoadUseList(bool bAutoDownload,
+    out string strError)
+        {
+            strError = "";
+
+            // 优化
+            if (this.UseList != null)
+                return 0;
+
+            string strFileName = Path.Combine(this.DataDir, "bibuse.xml");
+
+            if (File.Exists(strFileName) == false)
+            {
+                if (bAutoDownload == true)
+                {
+                    string strError1 = "";
+                    int nRet = this.DownloadDataFile(Path.GetFileName(strFileName),    // "isbn.xml"
+                        out strError1);
+                    if (nRet == -1)
+                    {
+                        strError = strError + "\r\n自动下载文件。\r\n" + strError1;
+                        return -1;
+                    }
+                }
+                else
+                {
+                    strError = $"文件 {strFileName} 不存在";
+                    return -1;
+                }
+            }
+
+            try
+            {
+                this.UseList = new UseCollection();
+                var result = this.UseList.Load(strFileName);
+                if (result.Value == -1)
+                {
+                    strError = result.ErrorInfo;
+                    return -1;
+                }
+            }
+            catch (Exception ex)
+            {
+                strError = "装载 bibuse.xml 文件发生错误 :" + ex.Message;
                 return -1;
             }
 
@@ -7747,7 +7894,7 @@ Keys keyData)
             OpenWindow<MessageForm>();
         }
 
-        #region 序列号机制
+#region 序列号机制
 
         bool _testMode = false;
 
@@ -8066,7 +8213,7 @@ Keys keyData)
 
 #endif
 
-        #endregion
+#endregion
 
         private void MenuItem_resetSerialCode_Click(object sender, EventArgs e)
         {
@@ -8173,7 +8320,7 @@ Keys keyData)
             return Path.Combine(this.UserTempDir, "~" + strPrefix + Guid.NewGuid().ToString());
         }
 
-        #region servers.xml
+#region servers.xml
 
         // HnbUrl.HnbUrl
 
@@ -8187,7 +8334,10 @@ Keys keyData)
 
         static string _baseCfg = @"
 <root>
-  <server name='红泥巴.数字平台中心' type='dp2library' url='http://hnbclub.cn/dp2library' userName='public'/>
+<!--
+  <server name='网众' type='dp2library' url='net.tcp://118.25.225.224:8002/dp2library/' userName='?'/>
+-->
+  <server name='红泥巴.数字平台中心' type='dp2library' url='net.tcp://58.87.101.80:101/hnb/' userName='public'/>
   <server name='亚马逊中国' type='amazon' url='webservices.amazon.cn'/>
 </root>";
 
@@ -8342,6 +8492,28 @@ Keys keyData)
                     }
                 }
 
+                /*
+                // TODO: 询问账户名和密码(账户名第一字符为 ~ 表示这是一个读者账户)。并验证。可以放弃加入此服务器节点
+                string strWangzhongUrl = "";
+                {
+                    XmlElement server = dom.DocumentElement.SelectSingleNode("server[@name='网众']") as XmlElement;
+                    if (server != null)
+                        strWangzhongUrl = server.GetAttribute("url");
+
+                    // return:
+                    //      -1  出错
+                    //      0   不是同一个服务器
+                    //      1   是同一个服务器
+                    nRet = IsSameDp2libraryServer(this.LibraryServerUrl, strWangzhongUrl, out strError);
+                    if (nRet == -1)
+                        return -1;
+                    if (nRet == 1)
+                    {
+                        server.ParentNode.RemoveChild(server);
+                    }
+                }
+                */
+
                 dom.Save(strCfgFileName);
                 return 0;
             }
@@ -8471,7 +8643,7 @@ Keys keyData)
             return this._currentUserRights;
         }
 
-        #endregion // servers.xml
+#endregion // servers.xml
 
         void EnableFingerprintSendKey(bool enable)
         {
@@ -8485,6 +8657,7 @@ Keys keyData)
                 return;
             try
             {
+                // TODO: 先查询 SendKey 状态，有变化才发出请求
                 channel?.Object?.EnableSendKey(enable);
             }
             catch
@@ -8535,7 +8708,7 @@ Keys keyData)
 #endif
         }
 
-        #region 消息过滤
+#region 消息过滤
 
 #if NO
         public event MessageFilterEventHandler MessageFilter = null;
@@ -8565,7 +8738,7 @@ Keys keyData)
 
 #endif
 
-        #endregion
+#endregion
 
         /// <summary>
         /// 获得当前 dp2library 服务器相关的本地配置目录路径。这是在用户目录中用 URL 映射出来的子目录名

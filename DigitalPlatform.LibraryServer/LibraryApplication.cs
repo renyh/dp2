@@ -20,11 +20,11 @@ using DigitalPlatform.rms.Client;
 using DigitalPlatform.Xml;
 using DigitalPlatform.IO;
 using DigitalPlatform.Text;
-using DigitalPlatform.Range;
 
 using DigitalPlatform.Message;
 using DigitalPlatform.rms.Client.rmsws_localhost;
 using DigitalPlatform.LibraryServer.Common;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.LibraryServer
 {
@@ -67,7 +67,7 @@ namespace DigitalPlatform.LibraryServer
 
         public DailyItemCountTable DailyItemCountTable = new DailyItemCountTable();
 
-        internal static DateTime _expire = new DateTime(2019, 5, 15); // 上一个版本是 2019/2/15 2018/11/15 2018/9/15 2018/7/15 2018/5/15 2018/3/15 2017/1/15 2017/12/1 2017/9/1 2017/6/1 2017/3/1 2016/11/1
+        internal static DateTime _expire = new DateTime(2019, 7, 15); // 上一个版本是 2019/5/15 2019/2/15 2018/11/15 2018/9/15 2018/7/15 2018/5/15 2018/3/15 2017/1/15 2017/12/1 2017/9/1 2017/6/1 2017/3/1 2016/11/1
 
 #if NO
         int m_nRefCount = 0;
@@ -556,6 +556,13 @@ namespace DigitalPlatform.LibraryServer
             this.LockForWrite();    // 2016/10/16
             try
             {
+                string strLogDir = PathUtil.MergePath(strDataDir, "log");
+                // log
+                app.LogDir = strLogDir; // 日志存储目录
+                PathUtil.TryCreateDir(app.LogDir);  // 确保目录创建
+
+                this.WriteErrorLog("*********");
+                this.WriteErrorLog($"LoadCfg() Begin. bReload={bReload}");
 
                 // 装载配置文件的过程，只能消除以前的 StartError 挂起状态，其他状态是无法消除的
                 // 本函数过程也约定好，只进行 StartError 挂起，不做其他挂起
@@ -578,7 +585,6 @@ namespace DigitalPlatform.LibraryServer
                     string strBinDir = strHostDir;  //  PathUtil.MergePath(strHostDir, "bin");
                     string strCfgDir = PathUtil.MergePath(strDataDir, "cfgs");
                     string strCfgMapDir = PathUtil.MergePath(strDataDir, "cfgsmap");
-                    string strLogDir = PathUtil.MergePath(strDataDir, "log");
                     string strOperLogDir = PathUtil.MergePath(strDataDir, "operlog");
                     string strZhengyuanDir = PathUtil.MergePath(strDataDir, "zhengyuan");
                     string strDkywDir = PathUtil.MergePath(strDataDir, "dkyw");
@@ -596,10 +602,6 @@ namespace DigitalPlatform.LibraryServer
                     app.CfgMapDir = strCfgMapDir;
                     PathUtil.TryCreateDir(app.CfgMapDir);	// 确保目录创建
 
-                    // log
-                    app.LogDir = strLogDir;	// 日志存储目录
-                    PathUtil.TryCreateDir(app.LogDir);	// 确保目录创建
-
                     // zhengyuan 一卡通
                     app.ZhengyuanDir = strZhengyuanDir;
                     PathUtil.TryCreateDir(app.ZhengyuanDir);	// 确保目录创建
@@ -611,7 +613,6 @@ namespace DigitalPlatform.LibraryServer
                     // patron replication
                     app.PatronReplicationDir = strPatronReplicationDir;
                     PathUtil.TryCreateDir(app.PatronReplicationDir);	// 确保目录创建
-
 
                     // statis 统计文件
                     app.StatisDir = strStatisDir;
@@ -653,6 +654,9 @@ namespace DigitalPlatform.LibraryServer
                     if (PathUtil.TryClearDir(app.TempDir) == false)
                         app.WriteErrorLog("清除临时文件目录 " + app.TempDir + " 时出错");
 #endif
+#if LOG_INFO
+                        app.WriteErrorLog($"INFO: 清除临时文件目录 {app.TempDir}");
+#endif
                         try
                         {
                             PathUtil.ClearDir(app.TempDir);
@@ -675,8 +679,6 @@ namespace DigitalPlatform.LibraryServer
                     }
 
                     this.WriteErrorLog("序列号许可的功能: '" + this.Function + "' (" + GetFunctionDescription(this.Function) + ")");
-
-                    this.WriteErrorLog("*********");
 
                     if (bReload == true)
                         app.WriteErrorLog("library (" + FullVersion + ") application 开始重新装载 " + this.m_strFileName);
@@ -1050,10 +1052,25 @@ namespace DigitalPlatform.LibraryServer
                         if (nRet == -1)
                             app.WriteErrorLog(strError);
                         this.DeleteBiblioSubRecords = bValue;
+
+                        // 2019/4/30
+                        var value = node.GetAttribute("biblioSearchMaxCount");
+                        if (string.IsNullOrEmpty(value))
+                            this.BiblioSearchMaxCount = -1;
+                        else
+                        {
+                            if (Int64.TryParse(value, out Int64 nValue) == false)
+                            {
+                                app.WriteErrorLog($"cataloging/@biblioSearchMaxCount 值'{value}' 格式错误。应为一个整数");
+                                this.BiblioSearchMaxCount = -1;
+                            }
+                            this.BiblioSearchMaxCount = nValue;
+                        }
                     }
                     else
                     {
                         this.DeleteBiblioSubRecords = true;
+                        this.BiblioSearchMaxCount = -1;
                     }
 
                     // 入馆登记
@@ -1314,7 +1331,7 @@ namespace DigitalPlatform.LibraryServer
                         app.WriteErrorLog("INFO: OperLog.Initial");
 #endif
 
-                        // oper log
+                        // 注：OperLog 对象在 Initial() 之前，应该处于不可用状态。这样可以避免修复以前写入内容造成混乱
                         nRet = this.OperLog.Initial(this,
                             strOperLogDir,
                             out strError);
@@ -1873,6 +1890,11 @@ namespace DigitalPlatform.LibraryServer
                 }
 
                 return 0;
+            }
+            catch (Exception ex)
+            {
+                // 2019/4/26
+                this.WriteErrorLog($"LoadCfg() 出现异常: {ExceptionUtil.GetExceptionText(ex)}");
             }
             finally
             {
@@ -2740,6 +2762,8 @@ namespace DigitalPlatform.LibraryServer
                 // 稍微延时一下，避免很快地重装、正好和 尚在改写library.xml文件的的进程发生冲突
                 Thread.Sleep(500);
 
+                this.WriteErrorLog("watcher 触发了 LoadCfg() ...");
+
                 nRet = this.LoadCfg(
                     true,
                     this.DataDir,
@@ -3025,6 +3049,9 @@ namespace DigitalPlatform.LibraryServer
                             "serverReplication",
                             "authdbgroup",
                             "maps_856u",
+                            "globalResults",    // 2018/12/3
+                            "rfid", // 2019/1/11
+                            "barcodeValidation", // 2019/5/31
                         };
 
             foreach (string element_name in unique_containers)
@@ -3049,6 +3076,10 @@ namespace DigitalPlatform.LibraryServer
                     types.Add(type);
                 }
             }
+
+            string libraryName = DomUtil.GetElementText(this.LibraryCfgDom.DocumentElement, "libraryInfo/libraryName");
+            if (string.IsNullOrEmpty(libraryName) == false && libraryName.IndexOfAny(new char[] { '/', '\\' }) != -1)
+                errors.Add($"libraryInfo/libraryName 元素中的图书馆名 '{libraryName}' 不合法");
 
             if (errors.Count > 0)
             {
@@ -3480,6 +3511,7 @@ namespace DigitalPlatform.LibraryServer
                             "maps_856u",    // 2018/10/24
                             "globalResults",    // 2018/12/3
                             "rfid", // 2019/1/11
+                            "barcodeValidation", // 2019/5/31
                         };
 
                         RestoreElements(writer, elements);
@@ -3916,6 +3948,8 @@ namespace DigitalPlatform.LibraryServer
                     this.BatchTasks = null;
                 }
 
+                // 2019/4/26
+                this._physicalFileCache.Dispose();
             }
             catch (Exception ex)
             {
@@ -12466,7 +12500,6 @@ strLibraryCode);    // 读者所在的馆代码
                 goto ERROR1;
 
             // byte[] output_timestamp = null;
-            string strOutputPath = "";
 
             // 保存读者记录
             long lRet = channel.DoSaveTextRes(strReaderRecPath,
@@ -12475,7 +12508,7 @@ strLibraryCode);    // 读者所在的馆代码
                 "content", // "content,ignorechecktimestamp",
                 timestamp,   // timestamp,
                 out output_timestamp,
-                out strOutputPath,
+                out string strOutputPath,
                 out strError);
             if (lRet == -1)
             {
@@ -12483,13 +12516,11 @@ strLibraryCode);    // 读者所在的馆代码
                     && nRedoCount < 10)
                 {
                     // 重新装载读者记录
-                    string strXml = "";
-                    string strMetaData = "";
                     timestamp = null;
 
                     lRet = channel.GetRes(strReaderRecPath,
-                        out strXml,
-                        out strMetaData,
+                        out string strXml,
+                        out string strMetaData,
                         out timestamp,
                         out strOutputPath,
                         out strError);
@@ -12515,12 +12546,29 @@ strLibraryCode);    // 读者所在的馆代码
                 goto ERROR1;
             }
 
+            // ChangeReaderPassword() API 恢复动作
+            /*
+    <root>
+      <operation>changeReaderPassword</operation> 
+      <readerBarcode>...</readerBarcode>	读者证条码号
+      <newPassword>5npAUJ67/y3aOvdC0r+Dj7SeXGE=</newPassword> 
+      <operator>test</operator> 
+      <operTime>Fri, 08 Dec 2006 09:01:38 GMT</operTime> 
+      <readerRecord recPath='...'>...</readerRecord>	最新读者记录
+    </root>
+             * */
+
             // 写入日志
-            string strReaderBarcode = DomUtil.GetElementText(domOperLog.DocumentElement, "barcode");
+            string strReaderBarcode = DomUtil.GetElementText(readerdom.DocumentElement, "barcode"); // 2019/4/25 修改 bug。原来为 domOperLog.Document
+            string strNewPassword = DomUtil.GetElementText(readerdom.DocumentElement, "password"); // 2019/4/25 增加
 
             // 读者证条码号
             DomUtil.SetElementText(domOperLog.DocumentElement,
                 "readerBarcode", strReaderBarcode);
+
+            // 新密码(hash 形态)
+            DomUtil.SetElementText(domOperLog.DocumentElement,
+                "newPassword", strNewPassword);
 
             // 读者记录
             XmlNode node = DomUtil.SetElementText(domOperLog.DocumentElement,
@@ -15255,6 +15303,7 @@ strLibraryCode);    // 读者所在的馆代码
         RequestTimeOut = 112,
         TimestampMismatch = 113,
         Compressed = 114,   // 2017/10/7
+        NotFoundObjectFile = 115, // 2019/10/7
     }
 
     // API函数结果

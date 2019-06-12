@@ -28,10 +28,10 @@ using Ghostscript.NET.Rasterizer;
 
 using DigitalPlatform.ResultSet;
 using DigitalPlatform.Text;
-using DigitalPlatform.Range;
 using DigitalPlatform.Xml;
 using DigitalPlatform.IO;
 using System.Data.Common;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.rms
 {
@@ -51,6 +51,7 @@ namespace DigitalPlatform.rms
 
         public SQLiteInfo SQLiteInfo = null;
 
+        // 这个 FastMode 是专门针对 SQLite 数据库的
         public bool FastMode
         {
             get
@@ -79,7 +80,6 @@ namespace DigitalPlatform.rms
                      * */
                 }
                 this.SQLiteInfo.FastMode = value;
-
             }
         }
 
@@ -779,11 +779,14 @@ VerifyFull - Always use SSL. Fail if the host name is not correct.
 
             try
             {
+#if NO
                 if (this.RebuildIDs != null && this.RebuildIDs.Count > 0)
                 {
                     this.RebuildIDs.Delete();
                     this.RebuildIDs = null;
                 }
+#endif
+                DeleteRebuildIDs();
 
                 if (this.container.SqlServerType == SqlServerType.MsSqlServer)
                 {
@@ -1976,8 +1979,12 @@ ex);
                     PathUtil.TryCreateDir(Path.GetDirectoryName(strDatabaseFileName));
                 }
 
-                strCommand += " use master " + "\n";
+                // 2019/5/12
+                strCommand += $" ALTER DATABASE {this.m_strSqlDbName} MODIFY FILE (NAME = N'{this.m_strSqlDbName}', FILEGROWTH = 64MB)\n"
+                + $" ALTER DATABASE {this.m_strSqlDbName} SET RECOVERY SIMPLE\n";
+                // + $" ALTER DATABASE {this.m_strSqlDbName} SET AUTO_SHRINK ON \n";
 
+                strCommand += " use master " + "\n";
                 return strCommand;
             }
             else if (server_type == SqlServerType.SQLite)
@@ -3630,6 +3637,7 @@ handle.CancelTokenSource.Token).Result;
             else
 #endif
             {
+                // 注意: SQLite 这里的连接字符串是和具体数据库关联的
                 connection = new Connection(this,
     this.m_strConnString);
                 connection.TryOpen();
@@ -3714,7 +3722,8 @@ handle.CancelTokenSource.Token).Result;
             }
             catch (Exception ex)
             {
-                strError = "SearchByUnion() exception: " + ExceptionUtil.GetDebugText(ex);
+                // 注意这里可能捕获到 AggregationException，所以要用 ExceptionUtil.GetExceptionText() 来输出异常信息
+                strError = "ExecuteQueryFillResultSet() exception: " + ExceptionUtil.GetExceptionText(ex);
                 return -1;
             }
             finally // 连接
@@ -5933,7 +5942,8 @@ handle.CancelTokenSource.Token).Result;
                  * */
 
                 string strOrderBy = "";
-                if (string.IsNullOrEmpty(searchItem.OrderBy) == false)
+                if (string.IsNullOrEmpty(searchItem.OrderBy) == false
+                    && bSearchNull == false)    // 检索空的时候，列里面只有 id，没有 keystring 列，所以无法进行排序
                 {
                     strOrderBy = " ORDER BY " + searchItem.OrderBy + " ";
 
@@ -7047,7 +7057,7 @@ handle.CancelTokenSource.Token).Result;
                             // return:
                             //		-1  出错
                             //		-4  记录不存在
-        //      -100    对象文件不存在
+                            //      -100    对象文件不存在
                             //		>=0 资源总长度
                             lRet = this.GetImage(connection,
                                 strRecordID,
@@ -7704,7 +7714,7 @@ handle.CancelTokenSource.Token).Result;
                 PageItem item = _pageCache.GetPage(strRecPath, 0, 0, "object_file",
                     () =>
                     {
-                        string strTempFileName = this.container.GetTempFileName();
+                        string strTempFileName = this.container.GetTempFileName("obj");
                         // 先把整个对象文件写入一个对象文件
                         using (SqlImageStream source = new SqlImageStream(connection,
                         this.m_strSqlDbName,
@@ -7845,7 +7855,7 @@ handle.CancelTokenSource.Token).Result;
                     () =>
                     {
                         int nTotalPage = 0;
-                        string strTempFileName = this.container.GetTempFileName();
+                        string strTempFileName = this.container.GetTempFileName("pgi");
                         using (GhostscriptRasterizer rasterizer = new GhostscriptRasterizer())
                         {
                             rasterizer.Open(strPdfFileName, DatabaseCollection.gvi, false);
@@ -10327,11 +10337,6 @@ handle.CancelTokenSource.Token).Result;
 
             foreach (WriteInfo info in records)
             {
-                KeyCollection newKeys = null;
-                KeyCollection oldKeys = null;
-                XmlDocument newDom = null;
-                XmlDocument oldDom = null;
-
                 string strNewXml = info.record.Xml;
                 string strOldXml = "";
 
@@ -10342,9 +10347,8 @@ handle.CancelTokenSource.Token).Result;
                         byte[] baOldData = GetCompleteData(info.row_info);
                         if (baOldData != null && baOldData.Length > 0)
                         {
-                            byte[] baPreamble = null;
                             strOldXml = DatabaseUtil.ByteArrayToString(baOldData,
-                                out baPreamble);
+                                out byte[] baPreamble);
                         }
                     }
                 }
@@ -10371,10 +10375,10 @@ handle.CancelTokenSource.Token).Result;
                     strNewXml,
                     strOldXml,
                     true,
-                    out newKeys,
-                    out oldKeys,
-                    out newDom,
-                    out oldDom,
+                    out KeyCollection newKeys,
+                    out KeyCollection oldKeys,
+                    out XmlDocument newDom,
+                    out XmlDocument oldDom,
                     out strError);
                 if (nRet == -1)
                 {
@@ -10448,7 +10452,7 @@ handle.CancelTokenSource.Token).Result;
                 nRet = this.container.DelayTables.Write(
                     this.m_strSqlDbName,
                     total_newkeys,
-                    (dbname, tablename) => { return this.container.GetTempFileName(); },
+                    (dbname, tablename) => { return this.container.GetTempFileName("ukr"); },
                     out strError);
                 if (nRet == -1)
                     return -1;
@@ -10581,7 +10585,7 @@ handle.CancelTokenSource.Token).Result;
                 nRet = this.container.DelayTables.Write(
                     this.m_strSqlDbName,
                     total_oldkeys,
-                    (dbname, tablename) => { return this.container.GetTempFileName(); },
+                    (dbname, tablename) => { return this.container.GetTempFileName("ukr"); },
                     out strError);
                 if (nRet == -1)
                     return -1;
@@ -10618,7 +10622,7 @@ handle.CancelTokenSource.Token).Result;
             // 是否要直接利用输入的时间戳
             bool bForceTimestamp = StringUtil.IsInList("forcesettimestamp", strStyle);
 
-#region MS SQL Server
+            #region MS SQL Server
             if (connection.SqlServerType == SqlServerType.MsSqlServer)
             {
                 int nParameters = 0;
@@ -10894,9 +10898,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // MS SQL Server
+            #endregion // MS SQL Server
 
-#region SQLite
+            #region SQLite
             if (connection.SqlServerType == SqlServerType.SQLite)
             {
                 bool bFastMode = false;
@@ -11077,9 +11081,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // SQLite
+            #endregion // SQLite
 
-#region MySql
+            #region MySql
             if (connection.SqlServerType == SqlServerType.MySql)
             {
                 int nParameters = 0;
@@ -11296,9 +11300,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // MySql
+            #endregion // MySql
 
-#region Oracle
+            #region Oracle
             if (connection.SqlServerType == SqlServerType.Oracle)
             {
                 using (OracleCommand command = new OracleCommand("", connection.OracleConnection))
@@ -11481,7 +11485,7 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // Oracle
+            #endregion // Oracle
 
             return 0;
         }
@@ -11641,7 +11645,7 @@ handle.CancelTokenSource.Token).Result;
             if (nRet == -1)
                 return -1;
 
-#region MS SQL Server
+            #region MS SQL Server
             if (connection.SqlServerType == SqlServerType.MsSqlServer)
             {
                 // TODO: 可否限定超过一定尺寸的数据库就不要返回? 
@@ -11756,9 +11760,9 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // MS SQL Server
+            #endregion // MS SQL Server
 
-#region SQLite
+            #region SQLite
             else if (connection.SqlServerType == SqlServerType.SQLite)
             {
                 string strCommand = " SELECT "
@@ -11829,9 +11833,9 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // SQLite
+            #endregion // SQLite
 
-#region MySql
+            #region MySql
             else if (connection.SqlServerType == SqlServerType.MySql)
             {
                 // 注： MySql 这里和 SQLite 基本一样
@@ -11902,9 +11906,9 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // MySql
+            #endregion // MySql
 
-#region Oracle
+            #region Oracle
             else if (connection.SqlServerType == SqlServerType.Oracle)
             {
                 string strCommand = " SELECT "
@@ -11976,7 +11980,7 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // Oracle
+            #endregion // Oracle
 
             return 0;
         }
@@ -12080,7 +12084,7 @@ handle.CancelTokenSource.Token).Result;
                 connection.TryOpen();
                 try
                 {
-#region MS SQL Server
+                    #region MS SQL Server
                     if (this.container.SqlServerType == SqlServerType.MsSqlServer)
                     {
                         Stopwatch watch = new Stopwatch();
@@ -12110,9 +12114,9 @@ handle.CancelTokenSource.Token).Result;
                         watch.Stop();
                         this.container.KernelApplication.WriteErrorLog("MS SQL Server BulkCopy 耗时 " + watch.Elapsed.ToString());
                     }
-#endregion // MS SQL Server
+                    #endregion // MS SQL Server
 
-#region Oracle
+                    #region Oracle
                     //strError = "暂不支持";
                     //return -1;
                     if (this.container.SqlServerType == SqlServerType.Oracle)
@@ -12145,9 +12149,9 @@ handle.CancelTokenSource.Token).Result;
                         watch.Stop();
                         this.container.KernelApplication.WriteErrorLog("Oracle BulkCopy 耗时 " + watch.Elapsed.ToString());
                     }
-#endregion // Oracle
+                    #endregion // Oracle
 
-#region MySql
+                    #region MySql
                     if (this.container.SqlServerType == SqlServerType.MySql)
                     {
                         Stopwatch watch = new Stopwatch();
@@ -12161,6 +12165,9 @@ handle.CancelTokenSource.Token).Result;
                             int nRet = table.OpenForRead(table.FileName, out strError);
                             if (nRet == -1)
                                 return -1;
+
+                            // TODO: 锁定前标示状态，便于前端探知数据库状态
+
                             table.LockForRead();    // 这里读锁定整个对象。在 Read() 函数那里就不需要锁定了
                             try
                             {
@@ -12176,10 +12183,10 @@ handle.CancelTokenSource.Token).Result;
                         watch.Stop();
                         this.container.KernelApplication.WriteErrorLog("MySql BulkCopy 耗时 " + watch.Elapsed.ToString());
                     }
-#endregion // MySql
+                    #endregion // MySql
 
 
-#region SQLite
+                    #region SQLite
                     if (this.container.SqlServerType == SqlServerType.SQLite)
                     {
                         Stopwatch watch = new Stopwatch();
@@ -12210,7 +12217,7 @@ handle.CancelTokenSource.Token).Result;
                         watch.Stop();
                         this.container.KernelApplication.WriteErrorLog("SQLite BulkCopy 耗时 " + watch.Elapsed.ToString());
                     }
-#endregion // SQLite
+                    #endregion // SQLite
 
                 }
                 catch (SqlException sqlEx)
@@ -12803,7 +12810,7 @@ handle.CancelTokenSource.Token).Result;
             DateTime start_time_out = new DateTime(0);  // 跳出 try 范围的开始时间
 
             if (StringUtil.IsInList("fastmode", strStyle) == true)
-                this.FastMode = true;
+                this.FastMode = true;   // TODO: 那什么时候 this.FastMode 才会变回 false 呢？
 
             bool bFastMode = StringUtil.IsInList("fastmode", strStyle) || this.FastMode;
 
@@ -16027,7 +16034,7 @@ handle.CancelTokenSource.Token).Result;
             else if (keysDelete != null && keysDelete.Count > 0)
                 strRecordID = ((KeyItem)keysDelete[0]).RecordID;
 
-#region MS SQL Server
+            #region MS SQL Server
             if (connection.SqlServerType == SqlServerType.MsSqlServer)
             {
                 using (SqlCommand command = new SqlCommand("",
@@ -16229,9 +16236,9 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // MS SQL Server
+            #endregion // MS SQL Server
 
-#region SQLite
+            #region SQLite
             else if (connection.SqlServerType == SqlServerType.SQLite)
             {
                 using (SQLiteCommand command = new SQLiteCommand("",
@@ -16388,9 +16395,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // SQLite
+            #endregion // SQLite
 
-#region MySql
+            #region MySql
             else if (connection.SqlServerType == SqlServerType.MySql)
             {
                 List<string> lines = new List<string>();
@@ -16511,9 +16518,9 @@ handle.CancelTokenSource.Token).Result;
 
                 return 0;
             }
-#endregion // MySql
+            #endregion // MySql
 
-#region Oracle
+            #region Oracle
             else if (connection.SqlServerType == SqlServerType.Oracle)
             {
                 using (OracleCommand command = new OracleCommand("", connection.OracleConnection))
@@ -16670,7 +16677,7 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // Oracle
+            #endregion // Oracle
 
             return 0;
         }
@@ -16746,7 +16753,7 @@ handle.CancelTokenSource.Token).Result;
             List<string> filenames = new List<string>();    // 对象文件名数组 (短文件名)
             List<string> ids = new List<string>();  // 对象 ID 数组 (Length >= 10)
 
-#region MS SQL Server
+            #region MS SQL Server
             if (connection.SqlServerType == SqlServerType.MsSqlServer)
             {
                 string strCommand = "";
@@ -16874,9 +16881,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // enf of using command
             }
-#endregion // MS SQL Server
+            #endregion // MS SQL Server
 
-#region SQLite
+            #region SQLite
             else if (connection.SqlServerType == SqlServerType.SQLite)
             {
                 string strCommand = "";
@@ -17004,9 +17011,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // SQLite
+            #endregion // SQLite
 
-#region MySql
+            #region MySql
             else if (connection.SqlServerType == SqlServerType.MySql)
             {
                 string strCommand = "";
@@ -17138,9 +17145,9 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // MySql
+            #endregion // MySql
 
-#region Oracle
+            #region Oracle
             else if (connection.SqlServerType == SqlServerType.Oracle)
             {
                 string strCommand = "";
@@ -17255,7 +17262,7 @@ handle.CancelTokenSource.Token).Result;
                     }
                 } // end of using command
             }
-#endregion // Oracle
+            #endregion // Oracle
 
             DELETE_OBJECTFILE:
             // 删除对象文件
@@ -17312,7 +17319,7 @@ handle.CancelTokenSource.Token).Result;
                 strError = "connection为null";
                 return -1;
             }
-#region MS SQL Server
+            #region MS SQL Server
             if (connection.SqlServerType == SqlServerType.MsSqlServer)
             {
                 if (connection.SqlConnection == null)
@@ -17327,9 +17334,9 @@ handle.CancelTokenSource.Token).Result;
                 }
                 return 0;
             }
-#endregion // MS SQL Server
+            #endregion // MS SQL Server
 
-#region SQLite
+            #region SQLite
             if (connection.SqlServerType == SqlServerType.SQLite)
             {
                 if (connection.SQLiteConnection == null)
@@ -17344,9 +17351,9 @@ handle.CancelTokenSource.Token).Result;
                 }
                 return 0;
             }
-#endregion // SQLite
+            #endregion // SQLite
 
-#region MySql
+            #region MySql
             if (connection.SqlServerType == SqlServerType.MySql)
             {
                 if (connection.MySqlConnection == null)
@@ -17361,9 +17368,9 @@ handle.CancelTokenSource.Token).Result;
                 }
                 return 0;
             }
-#endregion // MySql
+            #endregion // MySql
 
-#region Oracle
+            #region Oracle
             if (connection.SqlServerType == SqlServerType.Oracle)
             {
                 if (connection.OracleConnection == null)
@@ -17379,7 +17386,7 @@ handle.CancelTokenSource.Token).Result;
                 }
                 return 0;
             }
-#endregion // Oracle
+            #endregion // Oracle
 
             return 0;
         }

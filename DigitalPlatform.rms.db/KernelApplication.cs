@@ -4,9 +4,9 @@ using System.Reflection;
 using System.Threading;
 using System.Diagnostics;
 using System.Runtime.Serialization;
+using System.Threading.Tasks;
 
 using DigitalPlatform.IO;
-using System.Threading.Tasks;
 
 namespace DigitalPlatform.rms
 {
@@ -32,6 +32,7 @@ namespace DigitalPlatform.rms
                 return version.ToString();
             }
         }
+
         // private string m_strLogFileName = "";	//日志文件名称
         private string m_strDebugFileName = "";	// 
         public bool DebugMode = false;
@@ -70,6 +71,9 @@ namespace DigitalPlatform.rms
             eventActive.Dispose();
             eventCommit.Dispose();
             eventFinished.Dispose();
+
+            // 2019/4/25
+            this.ResultSets?.Dispose();
         }
 
         // 启动工作线程
@@ -594,7 +598,9 @@ namespace DigitalPlatform.rms
                 // 试一下这样是否可以避免 MySQL Driver 中 DbCommand.Cancel() 发生死锁
                 // https://stackoverflow.com/questions/31495411/a-call-to-cancellationtokensource-cancel-never-returns
                 Task.Run(() => _app_down.Cancel());
-                _app_down.Token.WaitHandle.WaitOne(); // make sure to only continue when the cancellation completed (without waiting for all the callbacks)
+                _app_down.Token.WaitHandle.WaitOne(
+                    // TimeSpan.FromSeconds(10)
+                    ); // make sure to only continue when the cancellation completed (without waiting for all the callbacks)
             }
 
             eventClose.Set();	// 令工作线程退出

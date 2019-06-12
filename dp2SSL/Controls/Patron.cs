@@ -1,12 +1,14 @@
-﻿using DigitalPlatform.RFID;
-using DigitalPlatform.Xml;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
+
+using DigitalPlatform.RFID;
+using DigitalPlatform.Xml;
 
 namespace dp2SSL
 {
@@ -21,6 +23,8 @@ namespace dp2SSL
             {
                 if (_pii != value)
                 {
+                    // Debug.WriteLine($"PII='{value}'");
+
                     _pii = value;
                     OnPropertyChanged("PII");
                 }
@@ -131,6 +135,36 @@ namespace dp2SSL
     {
         // 来源。默认从 RFID 读卡器。"fingerprint" 表示从指纹仪而来
         public string Source { get; set; }
+
+        public bool IsFingerprintSource
+        {
+            get
+            {
+                return Source == "fingerprint";
+            }
+            set
+            {
+                if (value == true)
+                    Source = "fingerprint";
+                else
+                    Source = "";
+            }
+        }
+
+        public bool IsRfidSource
+        {
+            get
+            {
+                return Source == "";
+            }
+            set
+            {
+                if (value == true)
+                    Source = "";
+                else
+                    Source = "fingerprint";
+            }
+        }
 
         public new string UID
         {
@@ -245,7 +279,25 @@ namespace dp2SSL
             }
         }
 
-        public void SetPatronXml(string xml)
+        string _photoPath;
+
+        public string PhotoPath
+        {
+            get
+            {
+                return _photoPath;
+            }
+            set
+            {
+                if (_photoPath != value)
+                {
+                    _photoPath = value;
+                    OnPropertyChanged("PhotoPath");
+                }
+            }
+        }
+
+        public void SetPatronXml(string recpath, string xml)
         {
             if (string.IsNullOrEmpty(xml))
             {
@@ -260,6 +312,38 @@ namespace dp2SSL
 
             this.PatronName = DomUtil.GetElementText(dom.DocumentElement, "name");
             this.Department = DomUtil.GetElementText(dom.DocumentElement, "department");
+
+            // 获得头像路径
+            this.PhotoPath = GetCardPhotoPath(dom,
+                new List<string> { "face", "cardphoto" },
+                recpath);
+        }
+
+        // 从读者记录 XML 中获得读者卡片头像的路径。例如 "读者/1/object/0"
+        // parameters:
+        //      usage_list  用途列表。只要顺次匹配上其中任何一个就算命中
+        static string GetCardPhotoPath(XmlDocument readerdom,
+            List<string> usage_list,
+            string strRecPath)
+        {
+            XmlNamespaceManager nsmgr = new XmlNamespaceManager(new NameTable());
+            nsmgr.AddNamespace("dprms", DpNs.dprms);
+
+            foreach (string usage in usage_list)
+            {
+                XmlNodeList nodes = readerdom.DocumentElement.SelectNodes($"//dprms:file[@usage='{usage}']", nsmgr);
+                if (nodes.Count == 0)
+                    continue;
+
+                string strID = DomUtil.GetAttr(nodes[0], "id");
+                if (string.IsNullOrEmpty(strID) == true)
+                    continue;
+
+                string strResPath = strRecPath + "/object/" + strID;
+                return strResPath.Replace(":", "/");
+            }
+
+            return null;
         }
 
         // 刷新信息
@@ -291,6 +375,7 @@ namespace dp2SSL
             this.Department = null;
             this.UID = null;
             this.PII = null;
+            this.PhotoPath = "";
 
             this.SetNotEmpty();
         }

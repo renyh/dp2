@@ -1,19 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using System.Speech.Synthesis;
-using System.Threading;
 using System.Runtime.Remoting.Channels.Ipc;
 using System.Runtime.Remoting;
 using System.Runtime.Remoting.Channels;
-using System.Runtime.Serialization.Formatters;
-using System.Collections;
 
 using DigitalPlatform;
 using DigitalPlatform.Interfaces;
-
+using DigitalPlatform.CirculationClient;
 
 namespace FingerprintCenter
 {
@@ -133,8 +127,15 @@ namespace FingerprintCenter
 
         public static NormalResult _enableSendKey(bool enable)
         {
+            bool old_enable = false;
             if (Program.MainForm != null)
-                Program.MainForm.SendKeyEnabled = enable;
+            {
+                old_enable = Program.MainForm.SendKeyEnabled;
+                if (old_enable != enable)
+                    Program.MainForm.SendKeyEnabled = enable;
+                else
+                    return new NormalResult();  // 优化，如果值没有变化则不显示操作历史
+            }
 
             string message = "";
             if (enable)
@@ -184,22 +185,31 @@ namespace FingerprintCenter
         static List<string> _messages = new List<string>();
 
         // 取走一条消息
-        public string GetMessage(string style)
+        public GetMessageResult GetMessage(string style)
         {
             lock (_syncRoot_messages)
             {
                 // Program.MainForm.OutputHistory($"messages.Count={_messages.Count}");
-
+                if (ClientInfo.ErrorState != "normal")
+                {
+                    return new GetMessageResult
+                    {
+                        Value = -1,
+                        ErrorInfo = $"{ClientInfo.ErrorStateInfo}",
+                        ErrorCode = $"state:{ClientInfo.ErrorState}"
+                    };
+                }
                 if (_messages.Count == 0)
-                    return null;
+                    return new GetMessageResult { Message = null };
                 if (style == "clear")
                 {
                     _messages.Clear();
-                    return "";
+                    return new GetMessageResult { Message = "" };
                 }
                 string message = _messages[0];
                 _messages.RemoveAt(0);
-                return message;
+                // Program.MainForm?.Speak($"拿走 {message}");
+                return new GetMessageResult { Message = message };
             }
         }
 
@@ -430,7 +440,7 @@ Exception rethrown at [0]:
             Program.MainForm?.DisplayCancelButton(true);
             try
             {
-                TextResult result = Program.FingerPrint.GetRegisterString(strExcludeBarcodes);
+                TextResult result = Program.FingerPrint.GetRegisterString(null, strExcludeBarcodes);
                 if (result.Value == -1)
                 {
                     strError = result.ErrorInfo;
@@ -490,6 +500,29 @@ Exception rethrown at [0]:
                  false,
                  ref bChanged);
 #endif
+        }
+
+        public NormalResult GetState(string style)
+        {
+            if (ClientInfo.ErrorState == "normal")
+                return new NormalResult
+                {
+                    Value = 0,
+                    ErrorCode = ClientInfo.ErrorState,
+                    ErrorInfo = ClientInfo.ErrorStateInfo
+                };
+            return new NormalResult
+            {
+                Value = -1,
+                ErrorCode = ClientInfo.ErrorState,
+                ErrorInfo = ClientInfo.ErrorStateInfo
+            };
+        }
+
+        public NormalResult ActivateWindow()
+        {
+            Program.MainForm.ActivateWindow();
+            return new NormalResult();
         }
 
         public void Dispose()

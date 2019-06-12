@@ -68,7 +68,9 @@
             this.ToolStripMenuItem_returnForegift = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripSeparator3 = new System.Windows.Forms.ToolStripSeparator();
             this.toolStripButton_saveTo = new System.Windows.Forms.ToolStripButton();
-            this.toolStripButton_save = new System.Windows.Forms.ToolStripButton();
+            this.toolStripSplitButton_save = new System.Windows.Forms.ToolStripSplitButton();
+            this.ToolStripMenuItem_saveChangeBarcode = new System.Windows.Forms.ToolStripMenuItem();
+            this.ToolStripMenuItem_saveForce = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripButton_next = new System.Windows.Forms.ToolStripButton();
             this.toolStripButton_prev = new System.Windows.Forms.ToolStripButton();
             this.toolStripSeparator4 = new System.Windows.Forms.ToolStripSeparator();
@@ -81,12 +83,14 @@
             this.toolStripButton_saveTemplate = new System.Windows.Forms.ToolStripButton();
             this.toolStripSeparator8 = new System.Windows.Forms.ToolStripSeparator();
             this.toolStripMenuItem_createRfidCard = new System.Windows.Forms.ToolStripMenuItem();
+            this.toolStripMenuItem_bindCardNumber = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripMenuItem_editXML = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripMenuItem_exportDetailToExcelFile = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripMenuItem_exportExcel = new System.Windows.Forms.ToolStripMenuItem();
             this.ToolStripMenuItem_exportBorrowingBarcode = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripSeparator7 = new System.Windows.Forms.ToolStripSeparator();
             this.toolStripMenuItem_moveRecord = new System.Windows.Forms.ToolStripMenuItem();
+            this.toolStripMenuItem_clearFaceFeature = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripMenuItem_clearFingerprint = new System.Windows.Forms.ToolStripMenuItem();
             this.toolStripSeparator6 = new System.Windows.Forms.ToolStripSeparator();
             this.toolStripButton_option = new System.Windows.Forms.ToolStripButton();
@@ -95,7 +99,6 @@
             this.toolStripTextBox_barcode = new System.Windows.Forms.ToolStripTextBox();
             this.toolStripButton_load = new System.Windows.Forms.ToolStripButton();
             this.tableLayoutPanel_main = new System.Windows.Forms.TableLayoutPanel();
-            this.toolStripMenuItem_bindCardNumber = new System.Windows.Forms.ToolStripMenuItem();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainer_normal)).BeginInit();
             this.splitContainer_normal.Panel1.SuspendLayout();
             this.splitContainer_normal.Panel2.SuspendLayout();
@@ -125,7 +128,7 @@
             // splitContainer_normal.Panel2
             // 
             this.splitContainer_normal.Panel2.Controls.Add(this.webBrowser_readerInfo);
-            this.splitContainer_normal.Size = new System.Drawing.Size(895, 400);
+            this.splitContainer_normal.Size = new System.Drawing.Size(895, 415);
             this.splitContainer_normal.SplitterDistance = 479;
             this.splitContainer_normal.TabIndex = 5;
             // 
@@ -146,8 +149,8 @@
             this.readerEditControl1.ExpireDate = "";
             this.readerEditControl1.FaceFeature = "";
             this.readerEditControl1.FaceFeatureVersion = "";
-            this.readerEditControl1.Fingerprint = "";
-            this.readerEditControl1.FingerprintVersion = "";
+            this.readerEditControl1.FingerprintFeature = "";
+            this.readerEditControl1.FingerprintFeatureVersion = "";
             this.readerEditControl1.Foregift = "";
             this.readerEditControl1.Friends = "";
             this.readerEditControl1.Gender = "";
@@ -166,7 +169,7 @@
             this.readerEditControl1.RecPath = "";
             this.readerEditControl1.RefID = "";
             this.readerEditControl1.Rights = "";
-            this.readerEditControl1.Size = new System.Drawing.Size(479, 400);
+            this.readerEditControl1.Size = new System.Drawing.Size(479, 415);
             this.readerEditControl1.State = "";
             this.readerEditControl1.TabIndex = 0;
             this.readerEditControl1.Tel = "";
@@ -180,7 +183,7 @@
             this.webBrowser_readerInfo.Location = new System.Drawing.Point(0, 0);
             this.webBrowser_readerInfo.MinimumSize = new System.Drawing.Size(22, 24);
             this.webBrowser_readerInfo.Name = "webBrowser_readerInfo";
-            this.webBrowser_readerInfo.Size = new System.Drawing.Size(412, 400);
+            this.webBrowser_readerInfo.Size = new System.Drawing.Size(412, 415);
             this.webBrowser_readerInfo.TabIndex = 0;
             this.webBrowser_readerInfo.DocumentCompleted += new System.Windows.Forms.WebBrowserDocumentCompletedEventHandler(this.webBrowser_readerInfo_DocumentCompleted);
             // 
@@ -197,7 +200,7 @@
             this.tabControl_readerInfo.Location = new System.Drawing.Point(3, 34);
             this.tabControl_readerInfo.Name = "tabControl_readerInfo";
             this.tabControl_readerInfo.SelectedIndex = 0;
-            this.tabControl_readerInfo.Size = new System.Drawing.Size(909, 438);
+            this.tabControl_readerInfo.Size = new System.Drawing.Size(909, 453);
             this.tabControl_readerInfo.TabIndex = 0;
             this.tabControl_readerInfo.SelectedIndexChanged += new System.EventHandler(this.tabControl_readerInfo_SelectedIndexChanged);
             // 
@@ -207,7 +210,7 @@
             this.tabPage_normal.Location = new System.Drawing.Point(4, 28);
             this.tabPage_normal.Name = "tabPage_normal";
             this.tabPage_normal.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_normal.Size = new System.Drawing.Size(901, 406);
+            this.tabPage_normal.Size = new System.Drawing.Size(901, 421);
             this.tabPage_normal.TabIndex = 0;
             this.tabPage_normal.Text = "常规";
             this.tabPage_normal.UseVisualStyleBackColor = true;
@@ -218,7 +221,7 @@
             this.tabPage_borrowHistory.Location = new System.Drawing.Point(4, 28);
             this.tabPage_borrowHistory.Margin = new System.Windows.Forms.Padding(4);
             this.tabPage_borrowHistory.Name = "tabPage_borrowHistory";
-            this.tabPage_borrowHistory.Size = new System.Drawing.Size(901, 406);
+            this.tabPage_borrowHistory.Size = new System.Drawing.Size(901, 421);
             this.tabPage_borrowHistory.TabIndex = 3;
             this.tabPage_borrowHistory.Text = "借阅历史";
             this.tabPage_borrowHistory.UseVisualStyleBackColor = true;
@@ -230,7 +233,7 @@
             this.webBrowser_borrowHistory.Margin = new System.Windows.Forms.Padding(4);
             this.webBrowser_borrowHistory.MinimumSize = new System.Drawing.Size(30, 30);
             this.webBrowser_borrowHistory.Name = "webBrowser_borrowHistory";
-            this.webBrowser_borrowHistory.Size = new System.Drawing.Size(901, 406);
+            this.webBrowser_borrowHistory.Size = new System.Drawing.Size(901, 421);
             this.webBrowser_borrowHistory.TabIndex = 0;
             // 
             // tabPage_xml
@@ -239,7 +242,7 @@
             this.tabPage_xml.Location = new System.Drawing.Point(4, 28);
             this.tabPage_xml.Name = "tabPage_xml";
             this.tabPage_xml.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_xml.Size = new System.Drawing.Size(901, 406);
+            this.tabPage_xml.Size = new System.Drawing.Size(901, 421);
             this.tabPage_xml.TabIndex = 1;
             this.tabPage_xml.Text = "XML";
             this.tabPage_xml.UseVisualStyleBackColor = true;
@@ -250,7 +253,7 @@
             this.webBrowser_xml.Location = new System.Drawing.Point(3, 3);
             this.webBrowser_xml.MinimumSize = new System.Drawing.Size(22, 24);
             this.webBrowser_xml.Name = "webBrowser_xml";
-            this.webBrowser_xml.Size = new System.Drawing.Size(895, 400);
+            this.webBrowser_xml.Size = new System.Drawing.Size(895, 415);
             this.webBrowser_xml.TabIndex = 0;
             // 
             // tabPage_objects
@@ -259,7 +262,7 @@
             this.tabPage_objects.Location = new System.Drawing.Point(4, 28);
             this.tabPage_objects.Margin = new System.Windows.Forms.Padding(4);
             this.tabPage_objects.Name = "tabPage_objects";
-            this.tabPage_objects.Size = new System.Drawing.Size(901, 406);
+            this.tabPage_objects.Size = new System.Drawing.Size(901, 421);
             this.tabPage_objects.TabIndex = 2;
             this.tabPage_objects.Text = "对象";
             this.tabPage_objects.UseVisualStyleBackColor = true;
@@ -274,7 +277,7 @@
             this.binaryResControl1.Location = new System.Drawing.Point(0, 0);
             this.binaryResControl1.Name = "binaryResControl1";
             this.binaryResControl1.RightsCfgFileName = null;
-            this.binaryResControl1.Size = new System.Drawing.Size(901, 406);
+            this.binaryResControl1.Size = new System.Drawing.Size(901, 421);
             this.binaryResControl1.TabIndex = 1;
             this.binaryResControl1.TempDir = null;
             // 
@@ -285,7 +288,7 @@
             this.tabPage_qrCode.Location = new System.Drawing.Point(4, 28);
             this.tabPage_qrCode.Margin = new System.Windows.Forms.Padding(4);
             this.tabPage_qrCode.Name = "tabPage_qrCode";
-            this.tabPage_qrCode.Size = new System.Drawing.Size(901, 406);
+            this.tabPage_qrCode.Size = new System.Drawing.Size(901, 421);
             this.tabPage_qrCode.TabIndex = 4;
             this.tabPage_qrCode.Text = "二维码";
             this.tabPage_qrCode.UseVisualStyleBackColor = true;
@@ -307,7 +310,7 @@
             this.pictureBox_qrCode.Margin = new System.Windows.Forms.Padding(4);
             this.pictureBox_qrCode.Name = "pictureBox_qrCode";
             this.pictureBox_qrCode.Padding = new System.Windows.Forms.Padding(30);
-            this.pictureBox_qrCode.Size = new System.Drawing.Size(901, 406);
+            this.pictureBox_qrCode.Size = new System.Drawing.Size(901, 421);
             this.pictureBox_qrCode.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
             this.pictureBox_qrCode.TabIndex = 0;
             this.pictureBox_qrCode.TabStop = false;
@@ -330,7 +333,7 @@
             this.toolStripButton_createMoneyRecord,
             this.toolStripSeparator3,
             this.toolStripButton_saveTo,
-            this.toolStripButton_save,
+            this.toolStripSplitButton_save,
             this.toolStripButton_next,
             this.toolStripButton_prev,
             this.toolStripSeparator4,
@@ -341,7 +344,7 @@
             this.toolStripSeparator2,
             this.toolStripDropDownButton_otherFunc});
             this.toolStrip1.LayoutStyle = System.Windows.Forms.ToolStripLayoutStyle.HorizontalStackWithOverflow;
-            this.toolStrip1.Location = new System.Drawing.Point(0, 475);
+            this.toolStrip1.Location = new System.Drawing.Point(0, 490);
             this.toolStrip1.Name = "toolStrip1";
             this.toolStrip1.Padding = new System.Windows.Forms.Padding(0, 0, 2, 0);
             this.toolStrip1.Size = new System.Drawing.Size(915, 31);
@@ -427,7 +430,7 @@
             this.toolStripSplitButton_registerFace.ImageTransparentColor = System.Drawing.Color.Magenta;
             this.toolStripSplitButton_registerFace.Name = "toolStripSplitButton_registerFace";
             this.toolStripSplitButton_registerFace.Size = new System.Drawing.Size(45, 28);
-            this.toolStripSplitButton_registerFace.Text = "toolStripSplitButton1";
+            this.toolStripSplitButton_registerFace.Text = "登记人脸(用于人脸识别)";
             this.toolStripSplitButton_registerFace.ButtonClick += new System.EventHandler(this.toolStripSplitButton_registerFace_ButtonClick);
             // 
             // ToolStripMenuItem_pasteCardPhoto
@@ -510,15 +513,31 @@
             this.toolStripButton_saveTo.ToolTipText = "将记录保存为一条新的记录";
             this.toolStripButton_saveTo.Click += new System.EventHandler(this.toolStripButton_saveTo_Click);
             // 
-            // toolStripButton_save
+            // toolStripSplitButton_save
             // 
-            this.toolStripButton_save.Image = ((System.Drawing.Image)(resources.GetObject("toolStripButton_save.Image")));
-            this.toolStripButton_save.ImageTransparentColor = System.Drawing.Color.Magenta;
-            this.toolStripButton_save.Name = "toolStripButton_save";
-            this.toolStripButton_save.Size = new System.Drawing.Size(74, 28);
-            this.toolStripButton_save.Text = "保存";
-            this.toolStripButton_save.ToolTipText = "将当前修改覆盖保存到数据库";
-            this.toolStripButton_save.Click += new System.EventHandler(this.toolStripButton_save_Click);
+            this.toolStripSplitButton_save.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.ToolStripMenuItem_saveChangeBarcode,
+            this.ToolStripMenuItem_saveForce});
+            this.toolStripSplitButton_save.Image = ((System.Drawing.Image)(resources.GetObject("toolStripSplitButton_save.Image")));
+            this.toolStripSplitButton_save.ImageTransparentColor = System.Drawing.Color.Magenta;
+            this.toolStripSplitButton_save.Name = "toolStripSplitButton_save";
+            this.toolStripSplitButton_save.Size = new System.Drawing.Size(91, 28);
+            this.toolStripSplitButton_save.Text = "保存";
+            this.toolStripSplitButton_save.ButtonClick += new System.EventHandler(this.toolStripSplitButton_save_ButtonClick);
+            // 
+            // ToolStripMenuItem_saveChangeBarcode
+            // 
+            this.ToolStripMenuItem_saveChangeBarcode.Name = "ToolStripMenuItem_saveChangeBarcode";
+            this.ToolStripMenuItem_saveChangeBarcode.Size = new System.Drawing.Size(284, 30);
+            this.ToolStripMenuItem_saveChangeBarcode.Text = "保存(强制修改证条码号)";
+            this.ToolStripMenuItem_saveChangeBarcode.Click += new System.EventHandler(this.ToolStripMenuItem_saveChangeBarcode_Click);
+            // 
+            // ToolStripMenuItem_saveForce
+            // 
+            this.ToolStripMenuItem_saveForce.Name = "ToolStripMenuItem_saveForce";
+            this.ToolStripMenuItem_saveForce.Size = new System.Drawing.Size(284, 30);
+            this.ToolStripMenuItem_saveForce.Text = "保存(强制修改)";
+            this.ToolStripMenuItem_saveForce.Click += new System.EventHandler(this.ToolStripMenuItem_saveForce_Click);
             // 
             // toolStripButton_next
             // 
@@ -603,6 +622,7 @@
             this.ToolStripMenuItem_exportBorrowingBarcode,
             this.toolStripSeparator7,
             this.toolStripMenuItem_moveRecord,
+            this.toolStripMenuItem_clearFaceFeature,
             this.toolStripMenuItem_clearFingerprint,
             this.toolStripSeparator6,
             this.toolStripButton_option});
@@ -634,6 +654,13 @@
             this.toolStripMenuItem_createRfidCard.Size = new System.Drawing.Size(360, 30);
             this.toolStripMenuItem_createRfidCard.Text = "创建 RFID 读者卡 (ISO15693) ...";
             this.toolStripMenuItem_createRfidCard.Click += new System.EventHandler(this.toolStripMenuItem_createRfidCard_Click);
+            // 
+            // toolStripMenuItem_bindCardNumber
+            // 
+            this.toolStripMenuItem_bindCardNumber.Name = "toolStripMenuItem_bindCardNumber";
+            this.toolStripMenuItem_bindCardNumber.Size = new System.Drawing.Size(360, 30);
+            this.toolStripMenuItem_bindCardNumber.Text = "绑定卡号 ...";
+            this.toolStripMenuItem_bindCardNumber.Click += new System.EventHandler(this.toolStripMenuItem_bindCardNumber_Click);
             // 
             // toolStripMenuItem_editXML
             // 
@@ -677,11 +704,18 @@
             this.toolStripMenuItem_moveRecord.ToolTipText = "在读者库之间移动记录";
             this.toolStripMenuItem_moveRecord.Click += new System.EventHandler(this.toolStripMenuItem_moveRecord_Click);
             // 
+            // toolStripMenuItem_clearFaceFeature
+            // 
+            this.toolStripMenuItem_clearFaceFeature.Name = "toolStripMenuItem_clearFaceFeature";
+            this.toolStripMenuItem_clearFaceFeature.Size = new System.Drawing.Size(360, 30);
+            this.toolStripMenuItem_clearFaceFeature.Text = "清除人脸特征";
+            this.toolStripMenuItem_clearFaceFeature.Click += new System.EventHandler(this.toolStripMenuItem_clearFaceFeature_Click);
+            // 
             // toolStripMenuItem_clearFingerprint
             // 
             this.toolStripMenuItem_clearFingerprint.Name = "toolStripMenuItem_clearFingerprint";
             this.toolStripMenuItem_clearFingerprint.Size = new System.Drawing.Size(360, 30);
-            this.toolStripMenuItem_clearFingerprint.Text = "清除指纹信息(&C)";
+            this.toolStripMenuItem_clearFingerprint.Text = "清除指纹特征";
             this.toolStripMenuItem_clearFingerprint.Click += new System.EventHandler(this.toolStripMenuItem_clearFingerprint_Click);
             // 
             // toolStripSeparator6
@@ -754,22 +788,15 @@
             this.tableLayoutPanel_main.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableLayoutPanel_main.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutPanel_main.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableLayoutPanel_main.Size = new System.Drawing.Size(915, 506);
+            this.tableLayoutPanel_main.Size = new System.Drawing.Size(915, 521);
             this.tableLayoutPanel_main.TabIndex = 6;
-            // 
-            // toolStripMenuItem_bindCardNumber
-            // 
-            this.toolStripMenuItem_bindCardNumber.Name = "toolStripMenuItem_bindCardNumber";
-            this.toolStripMenuItem_bindCardNumber.Size = new System.Drawing.Size(360, 30);
-            this.toolStripMenuItem_bindCardNumber.Text = "绑定卡号 ...";
-            this.toolStripMenuItem_bindCardNumber.Click += new System.EventHandler(this.toolStripMenuItem_bindCardNumber_Click);
             // 
             // ReaderInfoForm
             // 
             this.AllowDrop = true;
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 18F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(915, 506);
+            this.ClientSize = new System.Drawing.Size(915, 521);
             this.Controls.Add(this.tableLayoutPanel_main);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Margin = new System.Windows.Forms.Padding(4);
@@ -817,7 +844,6 @@
         private System.Windows.Forms.TabPage tabPage_xml;
         private System.Windows.Forms.WebBrowser webBrowser_xml;
         private System.Windows.Forms.ToolStrip toolStrip1;
-        private System.Windows.Forms.ToolStripButton toolStripButton_save;
         private System.Windows.Forms.ToolStripButton toolStripButton_saveTo;
         private System.Windows.Forms.ToolStripButton toolStripButton_delete;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator1;
@@ -870,5 +896,9 @@
         private System.Windows.Forms.ToolStripMenuItem ToolStripMenuItem_pasteCardPhoto;
         private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem_createRfidCard;
         private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem_bindCardNumber;
+        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem_clearFaceFeature;
+        private System.Windows.Forms.ToolStripSplitButton toolStripSplitButton_save;
+        private System.Windows.Forms.ToolStripMenuItem ToolStripMenuItem_saveChangeBarcode;
+        private System.Windows.Forms.ToolStripMenuItem ToolStripMenuItem_saveForce;
     }
 }

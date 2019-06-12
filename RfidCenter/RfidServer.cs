@@ -23,6 +23,39 @@ namespace RfidCenter
             _cancelInventory?.Cancel();
         }
 
+        public NormalResult GetState(string style)
+        {
+            if (Program.MainForm.ErrorState == "normal")
+            {
+                var result = ListReaders();
+                if (result.Readers.Length == 0)
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorCode = "noReaders",
+                        ErrorInfo = "没有任何连接的读卡器"
+                    };
+                return new NormalResult
+                {
+                    Value = 0,
+                    ErrorCode = Program.MainForm.ErrorState,
+                    ErrorInfo = Program.MainForm.ErrorStateInfo
+                };
+            }
+            return new NormalResult
+            {
+                Value = -1,
+                ErrorCode = Program.MainForm.ErrorState,
+                ErrorInfo = Program.MainForm.ErrorStateInfo
+            };
+        }
+
+        public NormalResult ActivateWindow()
+        {
+            Program.MainForm.ActivateWindow();
+            return new NormalResult();
+        }
+
         // 列出当前可用的 reader
         public ListReadersResult ListReaders()
         {
@@ -36,13 +69,20 @@ namespace RfidCenter
             return new ListReadersResult { Readers = readers.ToArray() };
         }
 
-
-
         // parameters:
         //      style   如果为 "getTagInfo"，表示要在结果中返回 TagInfo
         public ListTagsResult ListTags(string reader_name, string style)
         {
             InventoryResult result = new InventoryResult();
+
+            if (Program.MainForm.ErrorState != "normal")
+                return new ListTagsResult
+                {
+                    Value = -1,
+                    ErrorInfo = $"{Program.MainForm.ErrorStateInfo}",
+                    ErrorCode = $"state:{Program.MainForm.ErrorState}"
+                };
+
             List<OneTag> tags = new List<OneTag>();
 
             // uid --> OneTag
@@ -62,11 +102,10 @@ namespace RfidCenter
                 if (Reader.MatchReaderName(reader_name, reader.Name) == false)
                     continue;
 
-
                 InventoryResult inventory_result = Program.Rfid.Inventory(reader.Name, "");
                 if (inventory_result.Value == -1)
                 {
-                    return new ListTagsResult { Value = -1, ErrorInfo = inventory_result.ErrorInfo };
+                    return new ListTagsResult { Value = -1, ErrorInfo = inventory_result.ErrorInfo, ErrorCode = inventory_result.ErrorCode };
                 }
 
                 foreach (InventoryInfo info in inventory_result.Results)
@@ -168,6 +207,14 @@ namespace RfidCenter
         public GetTagInfoResult GetTagInfo(string reader_name,
             string uid)
         {
+            if (Program.MainForm.ErrorState != "normal")
+                return new GetTagInfoResult
+                {
+                    Value = -1,
+                    ErrorInfo = $"{Program.MainForm.ErrorStateInfo}",
+                    ErrorCode = $"state:{Program.MainForm.ErrorState}"
+                };
+
             List<GetTagInfoResult> errors = new List<GetTagInfoResult>();
             foreach (Reader reader in Program.Rfid.Readers)
             {
@@ -298,6 +345,8 @@ bool enable)
                 };
 
             {
+                // TODO: 检查 uid 字符串内容是否合法。应为 hex 数字
+
                 // return result.Value
                 //      -1  出错
                 //      0   成功
@@ -444,6 +493,11 @@ new_password);
 
         public NormalResult EnableSendKey(bool enable)
         {
+            // 如果和以前的值相同
+            bool old_value = _sendKeyEnabled.Value;
+            if (old_value == enable)
+                return new NormalResult();
+
             if (enable == true)
                 _sendKeyEnabled.FalseToTrue();
             else
@@ -501,6 +555,12 @@ new_password);
 
             if (Program.Rfid.Readers.Count == 0)
                 Program.MainForm.OutputHistory("当前没有可用的读卡器", 2);
+            else
+            {
+                List<string> names = new List<string>();
+                Program.Rfid.Readers.ForEach((o) => names.Add(o.Name));
+                Program.MainForm.OutputHistory($"当前读卡器数量 {Program.Rfid.Readers.Count}。包括: \r\n{StringUtil.MakePathList(names,"\r\n")}", 0);
+            }
 
             _cancelInventory = new CancellationTokenSource();
             bool bFirst = true;
@@ -524,6 +584,9 @@ new_password);
                     {
                         if (reader == null)
                             continue;
+
+                        if (string.IsNullOrEmpty(Program.Rfid.State) == false)
+                            break;
 
                         InventoryResult inventory_result = Program.Rfid.Inventory(
                             reader.Name, bFirst ? "" : "only_new");
@@ -583,7 +646,7 @@ new_password);
                 if (_lastErrorCount > 200 * minutes)  // 200 相当于一分钟连续报错的量
                 {
                     // 触发重启全部读卡器
-                    Program.MainForm?.BeginRefreshReaders();
+                    Program.MainForm?.BeginRefreshReaders("connected", new CancellationToken());
                     Program.MainForm?.Speak("尝试重新初始化全部读卡器");
                     _lastErrorCount = 0;
                 }

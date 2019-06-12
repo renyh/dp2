@@ -21,6 +21,8 @@ using DigitalPlatform.Text;
 using DigitalPlatform.Script;
 using DigitalPlatform.Interfaces;
 using DigitalPlatform.rms.Client;
+using DigitalPlatform.Core;
+using DigitalPlatform.LibraryServer.Common;
 
 namespace DigitalPlatform.LibraryServer
 {
@@ -201,7 +203,11 @@ namespace DigitalPlatform.LibraryServer
             if (nRet == -1)
                 return -1;
 
-            string[] saAddRef = { this.BinDir + "\\" + "digitalplatform.LibraryServer.dll" };
+            string[] saAddRef = {
+                "netstandard.dll",
+                Path.Combine(this.BinDir , "digitalplatform.core.dll"),
+                Path.Combine(this.BinDir , "digitalplatform.LibraryServer.dll"),
+            };
 
             string[] saTemp = new string[saRef.Length + saAddRef.Length];
             Array.Copy(saRef, 0, saTemp, 0, saRef.Length);
@@ -372,6 +378,16 @@ namespace DigitalPlatform.LibraryServer
             strWarning = "";
             assembly = null;
 
+
+            // 2019/4/5
+            if (refs != null
+                && Array.IndexOf(refs, "netstandard.dll") == -1)
+            {
+                List<string> temp = new List<string>(refs);
+                temp.Add("netstandard.dll");
+                refs = temp.ToArray();
+            }
+
             // CompilerParameters对象
             CompilerParameters compilerParams = new CompilerParameters();
 
@@ -481,6 +497,38 @@ namespace DigitalPlatform.LibraryServer
         {
             strError = "";
             nResultValue = -1;
+
+            // 2019/5/31
+            // 优先用 library.xml 中 barcodeValidation 来校验
+            if (this.LibraryCfgDom?.DocumentElement?.SelectSingleNode("barcodeValidation") is XmlElement barcodeValidation)
+            {
+                try
+                {
+                    BarcodeValidator validator = new BarcodeValidator(barcodeValidation.OuterXml);
+                    var result = validator.Validate(strLibraryCodeList,
+                        strBarcode, 
+                        false);
+                    if (result.OK == false 
+                        && result.ErrorCode == "scriptError")
+                    {
+                        strError = $"执行条码校验时出错: {result.ErrorInfo}";
+                        return -1;
+                    }
+                    strError = result.ErrorInfo;
+                    if (result.Type == "patron")
+                        nResultValue = 1;
+                    else if (result.Type == "entity")
+                        nResultValue = 2;
+                    else
+                        nResultValue = 0;
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    strError = "创建 BarcodeValidator() 出现异常: " + ex.Message;
+                    return -1;
+                }
+            }
 
             // return:
             //      -1  出错

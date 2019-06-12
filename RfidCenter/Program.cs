@@ -5,15 +5,17 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Reflection;
+using System.IO;
+using System.Runtime.InteropServices;
 
 using RfidDrivers.First;
 
 using DigitalPlatform;
 using DigitalPlatform.CirculationClient;
 using DigitalPlatform.Text;
-using System.Reflection;
-using System.IO;
-using System.Runtime.InteropServices;
+
+using DigitalPlatform.Core;
 
 namespace RfidCenter
 {
@@ -81,6 +83,11 @@ namespace RfidCenter
                             {
                                 // API.ShowWindow(process.MainWindowHandle, API.SW_SHOW);
                                 API.ShowWindow(process.MainWindowHandle, API.SW_RESTORE);
+                            }
+                            else
+                            {
+                                // 用 .net remoting 通讯
+                                MainForm.CallActivate("ipc://RfidChannel/RfidServer");
                             }
                         }
                     }

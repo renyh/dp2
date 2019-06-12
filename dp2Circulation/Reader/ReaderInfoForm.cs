@@ -23,6 +23,7 @@ using DigitalPlatform.Text;
 using DigitalPlatform.IO;
 using DigitalPlatform.Drawing;
 using DigitalPlatform.Interfaces;
+using System.Drawing.Imaging;
 
 using DigitalPlatform.CommonControl;
 using DigitalPlatform.Script;
@@ -50,9 +51,10 @@ namespace dp2Circulation
         const int WM_SAVETO = API.WM_USER + 205;
         const int WM_SAVE_RECORD = API.WM_USER + 206;
         const int WM_SAVE_RECORD_BARCODE = API.WM_USER + 207;
-        const int WM_FOREGIFT = API.WM_USER + 208;
-        const int WM_RETURN_FOREGIFT = API.WM_USER + 209;
-        const int WM_SET_FOCUS = API.WM_USER + 210;
+        const int WM_SAVE_RECORD_FORCE = API.WM_USER + 208;
+        const int WM_FOREGIFT = API.WM_USER + 210;
+        const int WM_RETURN_FOREGIFT = API.WM_USER + 211;
+        const int WM_SET_FOCUS = API.WM_USER + 212;
 
         WebExternalHost m_webExternalHost = new WebExternalHost();
 
@@ -1073,7 +1075,8 @@ MessageBoxDefaultButton.Button2);
             this.toolStripButton_createMoneyRecord.Enabled = bEnable;
 
             this.toolStripButton_saveTo.Enabled = bEnable;
-            this.toolStripButton_save.Enabled = bEnable;
+            //this.toolStripButton_save.Enabled = bEnable;
+            this.toolStripSplitButton_save.Enabled = bEnable;
 
             this.toolStripButton_clearOutofReservationCount.Enabled = bEnable;
 
@@ -1719,6 +1722,7 @@ strNewDefault);
             this.toolStrip1.Enabled = bEnable;
         }
 
+#if REMOVED
         // 保存
         private void toolStripButton_save_Click(object sender, EventArgs e)
         {
@@ -1732,6 +1736,7 @@ strNewDefault);
             else
                 this.commander.AddMessage(WM_SAVE_RECORD);
         }
+#endif
 
 #if NO
         // 形式校验条码号
@@ -1807,7 +1812,7 @@ strNewDefault);
         /// <summary>
         /// 保存记录
         /// </summary>
-        /// <param name="strStyle">风格。为 displaysuccess/verifybarcode/changereaderbarcode 之一或者组合。缺省值为 displaysuccess,verifybarcode</param>
+        /// <param name="strStyle">风格。为 displaysuccess/verifybarcode/changereaderbarcode/changereaderforce 之一或者组合。缺省值为 displaysuccess,verifybarcode</param>
         /// <returns>-1: 出错; 0: 放弃; 1: 成功</returns>
         public int SaveRecord(string strStyle = "displaysuccess,verifybarcode")
         {
@@ -1903,12 +1908,6 @@ strNewDefault);
                 if (nRet == -1)
                     goto ERROR1;
 
-                ErrorCodeValue kernel_errorcode;
-
-                byte[] baNewTimestamp = null;
-                string strExistingXml = "";
-                string strSavedXml = "";
-                string strSavedPath = "";
 
                 string strAction = this.m_strSetAction;
 
@@ -1920,6 +1919,14 @@ strNewDefault);
 
                 // 是否强制修改册条码号
                 bool bChangeReaderBarcode = StringUtil.IsInList("changereaderbarcode", strStyle);
+                bool bChangeReaderForce = StringUtil.IsInList("changereaderforce", strStyle);
+
+                if (bChangeReaderBarcode && bChangeReaderForce)
+                {
+                    strError = "style 不应同时包含 changereaderbarcode 和 changerecordforce";
+                    goto ERROR1;
+                }
+
                 if (strAction == "change" && bChangeReaderBarcode)
                 {
                     if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "2.51") < 0)
@@ -1928,6 +1935,11 @@ strNewDefault);
                         goto ERROR1;
                     }
                     strAction = "changereaderbarcode";
+                }
+
+                if (strAction == "change" && bChangeReaderForce)
+                {
+                    strAction = "forcechange";
                 }
 
                 // 调试
@@ -1941,12 +1953,11 @@ strNewDefault);
                     // 2007/11/5 changed
                     this.m_strSetAction != "new" ? this.readerEditControl1.OldRecord : null,
                     this.m_strSetAction != "new" ? this.readerEditControl1.Timestamp : null,
-
-                    out strExistingXml,
-                    out strSavedXml,
-                    out strSavedPath,
-                    out baNewTimestamp,
-                    out kernel_errorcode,
+                    out string strExistingXml,
+                    out string strSavedXml,
+                    out string strSavedPath,
+                    out byte[] baNewTimestamp,
+                    out ErrorCodeValue kernel_errorcode,
                     out strError);
                 if (lRet == -1)
                 {
@@ -2129,7 +2140,7 @@ strSavedXml);
                     //      0   成功
                     nRet = UpdateFingerprintCache(
                          this.readerEditControl1.Barcode,
-                         this.readerEditControl1.Fingerprint,
+                         this.readerEditControl1.FingerprintFeature,
                          out strError);
                     if (nRet == -1)
                     {
@@ -3593,7 +3604,22 @@ MessageBoxDefaultButton.Button2);
                         EnableToolStrip(true);
                     }
                     return;
-
+                case WM_SAVE_RECORD_FORCE:
+                    EnableToolStrip(false);
+                    try
+                    {
+                        if (this.m_webExternalHost.CanCallNew(
+                            this.commander,
+                            m.Msg) == true)
+                        {
+                            this.SaveRecord("displaysuccess,changereaderforce");
+                        }
+                    }
+                    finally
+                    {
+                        EnableToolStrip(true);
+                    }
+                    return;
             }
             base.DefWndProc(ref m);
         }
@@ -3884,6 +3910,7 @@ MessageBoxDefaultButton.Button2);
             {
                 // 自动缩小图像
                 nRet = SetCardPhoto(image,
+                    "cardphoto",
                 out strShrinkComment,
                 out strError);
                 if (nRet == -1)
@@ -3945,6 +3972,7 @@ MessageBoxDefaultButton.Button2);
                     {
                         // 自动缩小图像
                         nRet = SetCardPhoto(image,
+                    "cardphoto",
                         out strShrinkComment,
                         out strError);
                         if (nRet == -1)
@@ -4233,10 +4261,12 @@ MessageBoxDefaultButton.Button2);
         /// 设置当前记录的证件照片对象
         /// </summary>
         /// <param name="image">腿片对象</param>
+        /// <param name="object_type">对象的类型，cardphoto/face 之一</param>
         /// <param name="strShrinkComment">返回缩放注释</param>
         /// <param name="strError">返回出错信息</param>
         /// <returns>-1: 出错; 0: 成功</returns>
         public int SetCardPhoto(Image image,
+            string object_type,
             out string strShrinkComment,
             out string strError)
         {
@@ -4244,11 +4274,13 @@ MessageBoxDefaultButton.Button2);
             strShrinkComment = "";
             int nRet = 0;
 
+            ImageFormat format = ImageFormat.Jpeg;
+
             // 自动缩小图像
             string strMaxWidth = Program.MainForm.AppInfo.GetString(
     "readerinfoform_optiondlg",
-    "cardphoto_maxwidth",
-    "120");
+    $"{object_type}_maxwidth",
+    object_type == "cardphoto" ? "120" : "640");
             int nMaxWidth = -1;
             Int32.TryParse(strMaxWidth,
                 out nMaxWidth);
@@ -4282,17 +4314,18 @@ MessageBoxDefaultButton.Button2);
                 "~temp_make_cardphoto_",
                 ".png");
 
-            image.Save(strTempFilePath, System.Drawing.Imaging.ImageFormat.Png);
+            image.Save(strTempFilePath,
+                format);
             image.Dispose();
             image = null;
 
-            List<ListViewItem> items = this.binaryResControl1.FindItemByUsage("cardphoto");
+            List<ListViewItem> items = this.binaryResControl1.FindItemByUsage(object_type); // "cardphoto"
             if (items.Count == 0)
             {
                 ListViewItem item = null;
                 nRet = this.binaryResControl1.AppendNewItem(
     strTempFilePath,
-    "cardphoto",
+    object_type,   // "cardphoto",
     "",
     out item,
     out strError);
@@ -4301,7 +4334,7 @@ MessageBoxDefaultButton.Button2);
             {
                 nRet = this.binaryResControl1.ChangeObjectFile(items[0],
      strTempFilePath,
-     "cardphoto",
+     object_type,  // "cardphoto",
              out strError);
             }
             if (nRet == -1)
@@ -4633,6 +4666,7 @@ MessageBoxDefaultButton.Button1);
                     {
                         string strShrinkComment = "";
                         nRet = SetCardPhoto(image,
+                    "cardphoto",
         out strShrinkComment,
         out strError);
                         if (nRet == -1)
@@ -4904,164 +4938,6 @@ MessageBoxDefaultButton.Button2);
             e.LibraryCode = Program.MainForm.GetReaderDbLibraryCode(e.DbName);
         }
 
-        #region 人脸登记功能
-
-        async Task<GetFeatureStringResult> CancelReadFeatureString()
-        {
-            string strError = "";
-            GetFeatureStringResult result = new GetFeatureStringResult();
-
-            if (string.IsNullOrEmpty(Program.MainForm.FaceReaderUrl) == true)
-            {
-                strError = "尚未配置 人脸识别接口URL 系统参数，无法读取人脸信息";
-                goto ERROR1;
-            }
-
-            FaceChannel channel = StartFaceChannel(
-                Program.MainForm.FaceReaderUrl,
-                out strError);
-            if (channel == null)
-                goto ERROR1;
-
-            _inFaceCall++;
-            try
-            {
-                try
-                {
-                    return await Task.Factory.StartNew<GetFeatureStringResult>(
-                        () =>
-                        {
-                            GetFeatureStringResult temp_result = new GetFeatureStringResult();
-                            try
-                            {
-                                temp_result.Value = channel.Object.CancelGetFeatureString();
-                                if (temp_result.Value == -1)
-                                    temp_result.ErrorInfo = "API cancel return error";
-                                return temp_result;
-                            }
-                            catch (RemotingException ex)
-                            {
-                                temp_result.ErrorInfo = ex.Message;
-                                temp_result.Value = 0;  // 让调主认为没有出错
-                                return temp_result;
-                            }
-                            catch (Exception ex)
-                            {
-                                temp_result.ErrorInfo = ex.Message;
-                                temp_result.Value = -1;
-                                return temp_result;
-                            }
-                        });
-                }
-                catch (Exception ex)
-                {
-                    strError = "针对 " + Program.MainForm.FaceReaderUrl + " 的 GetFeatureString() 操作失败: " + ex.Message;
-                    goto ERROR1;
-                }
-            }
-            finally
-            {
-                _inFaceCall--;
-                EndFaceChannel(channel);
-            }
-            ERROR1:
-            result.ErrorInfo = strError;
-            result.Value = -1;
-            return result;
-        }
-
-        // return:
-        //      -1  error
-        //      0   放弃输入
-        //      1   成功输入
-        async Task<GetFeatureStringResult> ReadFeatureString(string strExcludeBarcodes)
-        {
-            string strError = "";
-            GetFeatureStringResult result = new GetFeatureStringResult();
-
-            if (string.IsNullOrEmpty(Program.MainForm.FaceReaderUrl) == true)
-            {
-                strError = "尚未配置 人脸识别接口URL 系统参数，无法读取人脸信息";
-                goto ERROR1;
-            }
-
-            FaceChannel channel = StartFaceChannel(
-                Program.MainForm.FaceReaderUrl,
-                out strError);
-            if (channel == null)
-                goto ERROR1;
-
-            _inFaceCall++;
-            try
-            {
-                return await GetFeatureString(channel, strExcludeBarcodes);
-            }
-            catch (Exception ex)
-            {
-                strError = "针对 " + Program.MainForm.FaceReaderUrl + " 的 GetFeatureString() 操作失败: " + ex.Message;
-                goto ERROR1;
-            }
-            finally
-            {
-                _inFaceCall--;
-                EndFaceChannel(channel);
-            }
-            ERROR1:
-            result.ErrorInfo = strError;
-            result.Value = -1;
-            return result;
-        }
-
-        class GetFeatureStringResult
-        {
-            public string Feature { get; set; }
-            public string Version { get; set; }
-
-            public int Value { get; set; }
-            public string ErrorInfo { get; set; }
-        }
-
-        Task<GetFeatureStringResult> GetFeatureString(FaceChannel channel,
-            string strExcludeBarcodes)
-        {
-            return Task.Factory.StartNew<GetFeatureStringResult>(
-    () =>
-    {
-        return CallGetFeatureString(channel, strExcludeBarcodes);
-    });
-        }
-
-        GetFeatureStringResult CallGetFeatureString(FaceChannel channel,
-    string strExcludeBarcodes)
-        {
-            GetFeatureStringResult result = new GetFeatureStringResult();
-            try
-            {
-                // 获得一个指纹特征字符串
-                // return:
-                //      -1  error
-                //      0   放弃输入
-                //      1   成功输入
-                int nRet = channel.Object.GetFeatureString(
-                    strExcludeBarcodes,
-                    out string strFingerprint,
-                    out string strVersion,
-                    out string strError);
-                result.Feature = strFingerprint;
-                result.Version = strVersion;
-                result.ErrorInfo = strError;
-                result.Value = nRet;
-                return result;
-            }
-            catch (Exception ex)
-            {
-                result.ErrorInfo = "GetFeatureString() 异常: " + ex.Message;
-                result.Value = -1;
-                return result;
-            }
-        }
-
-        #endregion
 
         #region 指纹登记功能
 
@@ -5429,8 +5305,8 @@ MessageBoxDefaultButton.Button1);
                 strVersion = "test-version";
 #endif
 
-                this.readerEditControl1.Fingerprint = result.Fingerprint;   // strFingerprint;
-                this.readerEditControl1.FingerprintVersion = result.Version;    // strVersion;
+                this.readerEditControl1.FingerprintFeature = result.Fingerprint;   // strFingerprint;
+                this.readerEditControl1.FingerprintFeatureVersion = result.Version;    // strVersion;
                 this.readerEditControl1.Changed = true;
             }
             finally
@@ -5457,14 +5333,8 @@ MessageBoxDefaultButton.Button1);
 
         private void toolStripMenuItem_clearFingerprint_Click(object sender, EventArgs e)
         {
-            /*
-            if (string.IsNullOrEmpty(this.readerEditControl1.Fingerprint) == false
-                || string.IsNullOrEmpty(this.readerEditControl1.FingerprintVersion) == false)
-            {
-            }
-             * */
-            this.readerEditControl1.FingerprintVersion = "";
-            this.readerEditControl1.Fingerprint = "";
+            this.readerEditControl1.FingerprintFeatureVersion = "";
+            this.readerEditControl1.FingerprintFeature = "";
             this.readerEditControl1.Changed = true;
         }
 
@@ -5949,9 +5819,11 @@ MessageBoxDefaultButton.Button1);
                 nPageNo = _pageCount - 1;
             }
 
-            int nRet = LoadBorrowHistory(this.toolStripTextBox_barcode.Text,
-     nPageNo,
-     out strError);
+            string strBarcode = this.toolStripTextBox_barcode.Text;
+            int nRet = LoadBorrowHistory(
+                string.IsNullOrEmpty(strBarcode) == true ? "!all" : strBarcode,
+                nPageNo,
+                out strError);
             if (nRet == -1)
                 goto ERROR1;
             return;
@@ -6489,7 +6361,10 @@ MessageBoxDefaultButton.Button1);
             try
             {
                 REDO:
-                GetFeatureStringResult result = await ReadFeatureString(this.readerEditControl1.Barcode);
+                GetFeatureStringResult result = await ReadFeatureString(
+                    null,
+                    this.readerEditControl1.Barcode,
+                    "confirmPicture,returnImage");
                 if (result.Value == -1)
                 {
                     DialogResult temp_result = MessageBox.Show(this,
@@ -6508,9 +6383,22 @@ MessageBoxDefaultButton.Button1);
                     goto ERROR1;
                 }
 
-                this.readerEditControl1.FaceFeature = result.Feature;
+                this.readerEditControl1.FaceFeature = result.FeatureString;
                 this.readerEditControl1.FaceFeatureVersion = result.Version;
                 this.readerEditControl1.Changed = true;
+
+                // 设置人脸照片对象
+                using (Image image = FromBytes(result.ImageData))
+                using (Image image1 = new Bitmap(image))
+                {
+                    // 自动缩小图像
+                    int nRet = SetCardPhoto(image1,
+                        "face",
+                    out string strShrinkComment,
+                    out strError);
+                    if (nRet == -1)
+                        goto ERROR1;
+                }
             }
             finally
             {
@@ -6524,6 +6412,14 @@ MessageBoxDefaultButton.Button1);
             ERROR1:
             Program.MainForm.StatusBarMessage = strError;
             ShowMessageBox(strError);
+        }
+
+        static Image FromBytes(byte[] bytes)
+        {
+            using (MemoryStream stream = new MemoryStream(bytes))
+            {
+                return Image.FromStream(stream);
+            }
         }
 
         private void ToolStripMenuItem_pasteCardPhoto_Click(object sender, EventArgs e)
@@ -6545,6 +6441,7 @@ MessageBoxDefaultButton.Button1);
             {
                 // 自动缩小图像
                 nRet = SetCardPhoto(image,
+                    "cardphoto",
                 out strShrinkComment,
                 out strError);
                 if (nRet == -1)
@@ -6584,6 +6481,47 @@ MessageBoxDefaultButton.Button1);
             if (dlg.DialogResult != DialogResult.OK)
                 return;
             this.readerEditControl1.CardNumber = dlg.Numbers;
+        }
+
+        // 清除人脸特征
+        private void toolStripMenuItem_clearFaceFeature_Click(object sender, EventArgs e)
+        {
+            this.readerEditControl1.FaceFeatureVersion = "";
+            this.readerEditControl1.FaceFeature = "";
+            this.readerEditControl1.Changed = true;
+        }
+
+        // 一般保存
+        private void toolStripSplitButton_save_ButtonClick(object sender, EventArgs e)
+        {
+            EnableToolStrip(false);
+
+            this.m_webExternalHost.StopPrevious();
+            this.webBrowser_readerInfo.Stop();
+
+            this.commander.AddMessage(WM_SAVE_RECORD);
+        }
+
+        // 能修改册条码号的保存
+        private void ToolStripMenuItem_saveChangeBarcode_Click(object sender, EventArgs e)
+        {
+            EnableToolStrip(false);
+
+            this.m_webExternalHost.StopPrevious();
+            this.webBrowser_readerInfo.Stop();
+
+            this.commander.AddMessage(WM_SAVE_RECORD_BARCODE);  // 能在读者尚有外借信息的情况下强行修改证条码号
+        }
+
+        // 强制保存所有内容，包括 borrows 元素。一定要小心使用本功能
+        private void ToolStripMenuItem_saveForce_Click(object sender, EventArgs e)
+        {
+            EnableToolStrip(false);
+
+            this.m_webExternalHost.StopPrevious();
+            this.webBrowser_readerInfo.Stop();
+
+            this.commander.AddMessage(WM_SAVE_RECORD_FORCE);
         }
     }
 }

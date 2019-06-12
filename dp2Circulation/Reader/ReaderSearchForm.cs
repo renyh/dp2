@@ -28,6 +28,7 @@ using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.dp2.Statis;
 using DigitalPlatform.LibraryServer;
 using static dp2Circulation.ReaderInfoForm;
+using DigitalPlatform.Core;
 
 namespace dp2Circulation
 {
@@ -1136,6 +1137,12 @@ out strError);
                     subMenuItem.Enabled = false;
                 menuItem.MenuItems.Add(subMenuItem);
 
+                subMenuItem = new MenuItem("重建人脸特征 [" + this.listView_records.SelectedItems.Count.ToString() + "] (&Q)");
+                subMenuItem.Click += new System.EventHandler(this.menu_rebuildFaceFeature_Click);
+                if (this.listView_records.SelectedItems.Count == 0 || this.InSearching == true)
+                    subMenuItem.Enabled = false;
+                menuItem.MenuItems.Add(subMenuItem);
+
                 // ---
                 subMenuItem = new MenuItem("-");
                 menuItem.MenuItems.Add(subMenuItem);
@@ -1202,7 +1209,6 @@ out strError);
                 subMenuItem = new MenuItem("宏定义 (&M)");
                 subMenuItem.Click += new System.EventHandler(this.menu_macroDef_Click);
                 menuItem.MenuItems.Add(subMenuItem);
-
             }
 
 #if NO
@@ -1339,14 +1345,38 @@ out strError);
         {
             try
             {
-                string strDirectory = Path.Combine(Program.MainForm.DataDir, "reader");
+                // 标配部分
+                string strDirectory = Path.Combine(Program.MainForm.DataDir, "patronSheetLayout");
+                List<string> results = getPatronSheetNames(strDirectory);
+
+                // 2019/4/23
+                // 定制部分
+                strDirectory = Path.Combine(Program.MainForm.UserDir, "patronSheetLayout");
+                results.AddRange(getPatronSheetNames(strDirectory));
+
+                return results;
+            }
+            catch
+            {
+                return new List<string>();
+            }
+        }
+
+        List<string> getPatronSheetNames(string strDirectory)
+        {
+            try
+            {
                 DirectoryInfo di = new DirectoryInfo(strDirectory);
-                FileInfo[] fis = di.GetFiles("patronSheetLayout*.xml");
+                FileInfo[] fis = di.GetFiles("*.xml");  // patronSheetLayout
                 List<string> results = new List<string>();
                 foreach (FileInfo fi in fis)
                 {
+                    /*
                     List<string> parts = StringUtil.ParseTwoPart(fi.Name, "_");
                     parts = StringUtil.ParseTwoPart(parts[1], ".");
+                    results.Add(parts[0]);
+                    */
+                    var parts = StringUtil.ParseTwoPart(fi.Name, ".");
                     results.Add(parts[0]);
                 }
 
@@ -1576,8 +1606,10 @@ MessageBoxDefaultButton.Button2);
                 ListViewPatronLoader loader = new ListViewPatronLoader(this.Channel,
                     stop,
                     items,
-                    this.m_biblioTable);
-                loader.DbTypeCaption = this.DbTypeCaption;
+                    this.m_biblioTable)
+                {
+                    DbTypeCaption = this.DbTypeCaption
+                };
 
                 loader.Prompt -= new MessagePromptEventHandler(loader_Prompt);
                 loader.Prompt += new MessagePromptEventHandler(loader_Prompt);
@@ -2947,6 +2979,100 @@ MessageBoxDefaultButton.Button1);
             MessageBox.Show(this, strError);
         }
 #endif
+        // 快速修改记录
+        async void menu_rebuildFaceFeature_Click(object sender, EventArgs e)
+        {
+            string strError = "";
+            int nRet = 0;
+
+            string version = "";
+
+            var result = await QuickChangeItemRecords(
+                (recpath, dom, time) =>
+                {
+                    // Program.MainForm.OperHistory.AppendHtml("<div class='debug recpath'>" + HttpUtility.HtmlEncode(recpath) + "</div>");
+
+                    // 检查是否具有人脸特征
+                    if (!(dom.DocumentElement.SelectSingleNode("face") is XmlElement face))
+                    {
+                        Program.MainForm.OperHistory.AppendHtml("<div class='debug normal'>" + HttpUtility.HtmlEncode("没有 face 元素") + "</div>");
+                        return false;
+                    }
+
+                    // TODO: 如果 version 一致，则跳过刷新
+                    if (string.IsNullOrEmpty(version))
+                    {
+                        GetFeatureStringResult version_result = ReadFeatureString(null, "", "getVersion").Result;
+                        if (version_result.Value == -1)
+                            throw new Exception(version_result.ErrorInfo);
+                        version = version_result.Version;
+                    }
+                    string current_version = face.GetAttribute("version");
+                    if (current_version == version)
+                    {
+                        Program.MainForm.OperHistory.AppendHtml("<div class='debug normal'>" + HttpUtility.HtmlEncode($"face/@version 符合 '{version}'，跳过刷新") + "</div>");
+                        return false;
+                    }
+
+                    // 获得图象数据
+                    // 获得读者记录中 usage 为 'face' 的对象数据
+                    // return:
+                    //      -1  出错
+                    //      0   对象不存在
+                    //      1   成功下载。文件全路径为 strLocalFilePath。这是一个临时文件，注意用完后要删除
+                    int nRet0 = DownloadPhoto(
+                        recpath,
+                        dom,
+                        "face",
+                        out string strLocalFilePath,
+                        out string strError0);
+                    if (nRet0 == -1)
+                    {
+                        Program.MainForm.OperHistory.AppendHtml("<div class='debug error'>" + HttpUtility.HtmlEncode(strError) + "</div>");
+                        throw new Exception(strError0);
+                    }
+                    if (nRet0 == 0)
+                    {
+                        // 没有对象记录
+                        face.ParentNode.RemoveChild(face);
+                        Program.MainForm.OperHistory.AppendHtml("<div class='debug yellow'>" + HttpUtility.HtmlEncode("没有对象记录。face 元素被清除") + "</div>");
+                        return true;
+                    }
+
+                    byte[] bytes = null;
+                    using (Stream stream = File.OpenRead(strLocalFilePath))
+                    {
+                        bytes = new byte[stream.Length];
+                        stream.Read(bytes, 0, bytes.Length);
+                    }
+
+                    GetFeatureStringResult feature_result = ReadFeatureString(bytes, "", "").Result;
+                    if (feature_result.Value == -1)
+                    {
+                        if (feature_result.ErrorCode == "getFeatureFail")
+                        {
+                            // 无法提取特征的情况，输出报错信息到操作历史，然后继续循环
+                            Program.MainForm.OperHistory.AppendHtml("<div class='debug error'>" + HttpUtility.HtmlEncode($"无法提取人脸特征 {feature_result.ErrorInfo}") + "</div>");
+                            return false;
+                        }
+                        throw new Exception(feature_result.ErrorInfo);
+                    }
+
+                    face.InnerText = feature_result.FeatureString;
+                    face.SetAttribute("version", feature_result.Version);
+                    Program.MainForm.OperHistory.AppendHtml("<div class='debug green'>" + HttpUtility.HtmlEncode("face 元素中人脸特征已经刷新") + "</div>");
+                    return true;
+                });
+            if (result.Value == -1)
+                goto ERROR1;
+
+            if (nRet != 0)
+                ShowMessageBox(result.ErrorInfo);
+            return;
+            ERROR1:
+            ShowMessageBox(result.ErrorInfo);
+        }
+
         // 快速修改记录
         void menu_quickChangeRecords_Click(object sender, EventArgs e)
         {
@@ -5391,6 +5517,7 @@ out strFingerprint);
                                     "system.xml.dll",
                                     "System.Runtime.Serialization.dll",
 
+                                    Environment.CurrentDirectory + "\\digitalplatform.core.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.Text.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.IO.dll",
@@ -5497,23 +5624,6 @@ dlg.UiState);
                 return -1;
             }
 
-#if NO
-            // 询问文件名
-            SaveFileDialog dlg = new SaveFileDialog();
-
-            dlg.Title = "请指定要输出的 Excel 文件名";
-            dlg.CreatePrompt = false;
-            dlg.OverwritePrompt = true;
-            // dlg.FileName = this.ExportExcelFilename;
-            // dlg.InitialDirectory = Environment.CurrentDirectory;
-            dlg.Filter = "Excel 文件 (*.xlsx)|*.xlsx|All files (*.*)|*.*";
-
-            dlg.RestoreDirectory = true;
-
-            if (dlg.ShowDialog() != DialogResult.OK)
-                return 0;
-#endif
-
             XLWorkbook doc = null;
 
             try
@@ -5526,6 +5636,8 @@ dlg.UiState);
                 strError = "ReaderSearchForm new XLWorkbook() {0BD1CB34-DF8A-4DDB-B884-8A9CF830D7C7} exception: " + ExceptionUtil.GetAutoText(ex);
                 return -1;
             }
+
+            Program.MainForm.OperHistory.AppendHtml("<div class='debug begin'>" + HttpUtility.HtmlEncode(DateTime.Now.ToLongTimeString()) + " 开始导出读者详情</div>");
 
             IXLWorksheet sheet = null;
             sheet = doc.Worksheets.Add("表格");
@@ -5562,6 +5674,28 @@ dlg.UiState);
                     catch (Exception ex)
                     {
                         strError = "装载读者记录 XML 到 DOM 时发生错误: " + ex.Message;
+                        return -1;
+                    }
+
+                    try
+                    {
+                        // 过滤读者记录
+                        // parameters:
+                        //      filtering   过滤特征。空表示不过滤。amerce,borrowing,overdue
+                        // return:
+                        //      true 表示通过了过滤
+                        //      false   表示没有通过过滤
+                        // exception:
+                        //      可能会抛出 Exception 异常
+                        if (FilterPatron(dom, dlg.Filtering) == false)
+                        {
+                            Program.MainForm.OperHistory.AppendHtml("<div class='debug recpath'>" + HttpUtility.HtmlEncode($"读者记录 {strXml} 不符合过滤条件 '{dlg.Filtering}'，被跳过") + "</div>");
+                            continue;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        strError = $"处理读者记录 {strXml} 时出现异常: {ex.Message}";
                         return -1;
                     }
 
@@ -5700,6 +5834,7 @@ dlg.UiState);
                     }
                 }
 
+                Program.MainForm.OperHistory.AppendHtml("<div class='debug end'>" + HttpUtility.HtmlEncode(DateTime.Now.ToLongTimeString()) + " 结束导出读者详情</div>");
             }
             return 1;
         }
@@ -6188,12 +6323,13 @@ dlg.UiState);
         // 2017/5/8
         // 从读者记录 XML 中获得读者卡片头像的路径。例如 "读者/1/object/0"
         static string GetCardPhotoPath(XmlDocument readerdom,
+            string usage,
             string strRecPath)
         {
             XmlNamespaceManager nsmgr = new XmlNamespaceManager(new NameTable());
             nsmgr.AddNamespace("dprms", DpNs.dprms);
 
-            XmlNodeList nodes = readerdom.DocumentElement.SelectNodes("//dprms:file[@usage='cardphoto']", nsmgr);
+            XmlNodeList nodes = readerdom.DocumentElement.SelectNodes($"//dprms:file[@usage='{usage}']", nsmgr);
 
             if (nodes.Count == 0)
                 return null;
@@ -6206,7 +6342,56 @@ dlg.UiState);
             return strResPath.Replace(":", "/");
         }
 
+        // return:
+        //      -1  出错
+        //      0   对象不存在
+        //      1   成功下载。文件全路径为 strLocalFilePath。这是一个临时文件，注意用完后要删除
+        public int DownloadPhoto(
+            string strRecPath,
+            XmlDocument dom,
+            string usage,
+            out string strLocalFilePath,
+            out string strError)
+        {
+            strError = "";
+            strLocalFilePath = "";
+
+            // 下载读者照片
+            // strCardPhotoPath = "";
+
+            string strObjectPath = GetCardPhotoPath(dom, usage, strRecPath); // "cardphoto"
+            if (string.IsNullOrEmpty(strObjectPath) == true)
+                return 0;
+            bool ok = false;
+            strLocalFilePath = Path.Combine(Program.MainForm.UserTempDir, "~cp_" + Guid.NewGuid().ToString());
+            LibraryChannel channel = this.GetChannel();
+            try
+            {
+                int nRet = GetCardPhotoFile(channel,
+stop,
+strObjectPath,
+strLocalFilePath,
+out strError);
+                if (nRet == -1)
+                {
+                    return -1;
+                    // 删除临时文件
+                }
+                // strCardPhotoPath = Path.GetFileName(strLocalFilePath);
+                ok = true;
+                return 1;
+            }
+            finally
+            {
+                this.ReturnChannel(channel);
+                if (ok == false)
+                    File.Delete(strLocalFilePath);
+            }
+        }
+
         // 创建读者账簿
+        // parameters:
+        //      strSheetDefName 打印方案名称
         // return:
         //      -1  出错
         //      0   用户中断
@@ -6242,8 +6427,34 @@ dlg.UiState);
             }
 
             ReaderSheetCollection sheets = new ReaderSheetCollection();
-
             string strTempDataFileName = Path.Combine(Program.MainForm.UserTempDir, "~readersheetdata.txt");
+
+            //      strTemplate 模板文件内容。如果为 null 表示不使用模板文件
+            string strTemplate = "";
+
+            {
+
+                string strTemplateFileName = Path.Combine(Program.MainForm.DataDir, "patronSheetLayout\\" + strSheetDefName + ".template");
+                if (File.Exists(strTemplateFileName) == false)
+                    strTemplateFileName = Path.Combine(Program.MainForm.UserDir, "patronSheetLayout\\" + strSheetDefName + ".template");
+
+                if (File.Exists(strTemplateFileName) == false)
+                    strTemplate = null;
+                else
+                {
+                    // 根据模板打印
+                    // 能自动识别文件内容的编码方式的读入文本文件内容模块
+                    // return:
+                    //      -1  出错
+                    //      0   文件不存在
+                    //      1   文件存在
+                    nRet = Global.ReadTextFileContent(strTemplateFileName,
+                        out strTemplate,
+                        out strError);
+                    if (nRet == -1)
+                        return -1;
+                }
+            }
 
             try
             {
@@ -6263,9 +6474,27 @@ dlg.UiState);
 
                             // 下载读者照片
                             string strCardPhotoPath = "";
+
+                            // return:
+                            //      -1  出错
+                            //      0   对象不存在
+                            //      1   成功下载。文件全路径为 strLocalFilePath。这是一个临时文件，注意用完后要删除
+                            int nRet0 = DownloadPhoto(
+                                strRecPath,
+                                dom,
+                                "cardphoto",
+                                out string strLocalFilePath,
+                                out string strError0);
+                            if (nRet0 == -1)
+                                MessageBox.Show(this, strError0);
+                            else if (nRet == 1)
+                                strCardPhotoPath = Path.GetFileName(strLocalFilePath);
+
+
+#if NO
                             {
                                 string strError0 = "";
-                                string strObjectPath = GetCardPhotoPath(dom, strRecPath);
+                                string strObjectPath = GetCardPhotoPath(dom, "cardphoto", strRecPath);
                                 if (string.IsNullOrEmpty(strObjectPath) == false)
                                 {
                                     string strLocalFilePath = Path.Combine(Program.MainForm.UserTempDir, "~cp_" + Guid.NewGuid().ToString());
@@ -6290,7 +6519,7 @@ dlg.UiState);
                                     }
                                 }
                             }
-
+#endif
                             string strDepartment = DomUtil.GetElementText(dom.DocumentElement, "department");
 
                             if (dlg.GroupByDepartment == false)
@@ -6313,7 +6542,10 @@ dlg.UiState);
                     {
                         foreach (ReaderSheetInfo info in sheets)
                         {
-                            info.Output(sw, strSheetDefName);
+                            if (string.IsNullOrEmpty(strTemplate))
+                                info.Output(sw, strSheetDefName);
+                            else
+                                info.OutputByTemplate(sw, strTemplate);
 
                             if (sheets.IsTail(info) == false)   // 最后一个元素末尾不需要换页
                             {
@@ -6327,7 +6559,8 @@ dlg.UiState);
                 }
 
                 LabelPrintForm labelPrintForm = Program.MainForm.EnsureLabelPrintForm();
-                labelPrintForm.LabelDefFilename = Path.Combine(Program.MainForm.DataDir, "reader\\patronSheetLayout_" + strSheetDefName + ".xml");
+                // labelPrintForm.LabelDefFilename = Path.Combine(Program.MainForm.DataDir, "reader\\patronSheetLayout_" + strSheetDefName + ".xml");
+                labelPrintForm.LabelDefFilename = GetLabelDefFileName(strSheetDefName);
                 labelPrintForm.LabelFilename = strTempDataFileName;
                 labelPrintForm.MdiParent = Program.MainForm;
                 labelPrintForm.Show();
@@ -6344,6 +6577,14 @@ dlg.UiState);
 
             // TODO: sheet 可以按照单位来区分。例如按照班级
             return 1;
+        }
+
+        string GetLabelDefFileName(string strSheetDefName)
+        {
+            string filename = Path.Combine(Program.MainForm.DataDir, "patronSheetLayout\\" + strSheetDefName + ".xml");
+            if (File.Exists(filename) == false)
+                filename = Path.Combine(Program.MainForm.UserDir, "patronSheetLayout\\" + strSheetDefName + ".xml");
+            return filename;
         }
 
 #if NO
@@ -6827,6 +7068,63 @@ dlg.UiState);
 
 #endif
 
+        // 过滤读者记录
+        // parameters:
+        //      filtering   过滤特征。空表示不过滤。amerce,borrowing,overdue
+        // return:
+        //      true 表示通过了过滤
+        //      false   表示没有通过过滤
+        // exception:
+        //      可能会抛出 Exception 异常
+        static bool FilterPatron(XmlDocument dom,
+            string filtering)
+        {
+            if (string.IsNullOrEmpty(filtering))
+                return true;
+
+            // 有未交费用
+            if (StringUtil.IsInList("amerce", filtering))
+            {
+                XmlNodeList overdues = dom.DocumentElement.SelectNodes("overdues/overdue");
+                if (overdues.Count > 0)
+                    return true;
+            }
+
+            // 有在借册
+            if (StringUtil.IsInList("borrowing", filtering))
+            {
+                XmlNodeList borrows = dom.DocumentElement.SelectNodes("borrows/borrow");
+                if (borrows.Count > 0)
+                    return true;
+            }
+
+            // 有过期未还的册
+            if (StringUtil.IsInList("overdue", filtering))
+            {
+                XmlNodeList borrows = dom.DocumentElement.SelectNodes("borrows/borrow");
+                foreach (XmlElement borrow in borrows)
+                {
+                    string borrowDate = borrow.GetAttribute("borrowDate");
+                    string period = borrow.GetAttribute("borrowPeriod");
+
+                    // 看现在是否已经超期
+                    // return:
+                    //      -1  检测过程出错(是否超期则未知)
+                    //      1   超期
+                    //      0   没有超期
+                    int nRet = Global.IsOverdue(borrowDate,
+                        period,
+                        out string strError);
+                    if (nRet == -1)
+                        throw new Exception($"在检查是否超期过程中发现读者记录错误: {strError}");
+                    if (nRet == 1)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
         // return:
         //      -1  出错
         //      0   用户中断
@@ -6909,6 +7207,8 @@ dlg.UiState);
 
             try
             {
+                Program.MainForm.OperHistory.AppendHtml("<div class='debug begin'>" + HttpUtility.HtmlEncode(DateTime.Now.ToLongTimeString()) + " 开始导出读者详情</div>");
+
                 // return:
                 //      -1  出错。包括用户中断的情况
                 //      >=0 实际处理的读者记录数
@@ -6918,6 +7218,28 @@ dlg.UiState);
                     (strRecPath, dom, timestamp) =>
                     {
                         this.ShowMessage("正在处理读者记录 " + strRecPath);
+
+                        try
+                        {
+                            // 过滤读者记录
+                            // parameters:
+                            //      filtering   过滤特征。空表示不过滤。amerce,borrowing,overdue
+                            // return:
+                            //      true 表示通过了过滤
+                            //      false   表示没有通过过滤
+                            // exception:
+                            //      可能会抛出 Exception 异常
+                            if (FilterPatron(dom, dlg.Filtering) == false)
+                            {
+                                Program.MainForm.OperHistory.AppendHtml("<div class='debug recpath'>" + HttpUtility.HtmlEncode($"读者记录 {strRecPath} 不符合过滤条件 '{dlg.Filtering}'，被跳过") + "</div>");
+                                return true;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            string strErrorText = $"处理读者记录 {strRecPath} 时出现异常: {ex.Message}";
+                            throw new Exception(strErrorText, ex);
+                        }
 
                         string strBarcode = DomUtil.GetElementText(dom.DocumentElement, "barcode");
 
@@ -7073,6 +7395,7 @@ dlg.UiState);
                     }
                 }
 
+                Program.MainForm.OperHistory.AppendHtml("<div class='debug end'>" + HttpUtility.HtmlEncode(DateTime.Now.ToLongTimeString()) + " 结束导出读者详情</div>");
                 this.ClearMessage();
             }
 
@@ -7082,6 +7405,7 @@ dlg.UiState);
         }
 
         // 将 20120101 - 20151231 这样的日期字符串形态转换为 SearchCharging() API 能接受的时间范围字符串形态
+        // 注意 SearchCharging() API 要的时间范围字符串，中间是一个波浪号而不是横杠
         static string GetTimeRange(string strText)
         {
             string strStart = "";

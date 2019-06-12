@@ -10,6 +10,7 @@ using System.Web;
 using System.Deployment.Application;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 
 using Microsoft.Win32;
 using Ionic.Zip;
@@ -27,7 +28,6 @@ using DigitalPlatform.Xml;
 using DigitalPlatform.CommonControl;
 using DigitalPlatform.CirculationClient;
 using DigitalPlatform.LibraryClient;
-using System.Threading.Tasks;
 
 namespace dp2Installer
 {
@@ -249,7 +249,7 @@ FormWindowState.Normal);
             string strHead = "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http://www.w3.org/1999/xhtml\"><head>"
     // + "<link rel='stylesheet' href='"+strCssFileName+"' type='text/css'>"
     + "<style media='screen' type='text/css'>"
-    + "body { font-family:Microsoft YaHei; background-color:#555555; color:#eeeeee; } "
+    + "body { font-family:Microsoft YaHei; background-color:#555555; color:#eeeeee; } " // background-color:#555555
     + "</style>"
     + "</head><body>";
 

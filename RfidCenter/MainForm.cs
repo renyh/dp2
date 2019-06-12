@@ -14,7 +14,9 @@ using System.Runtime.Remoting.Channels;
 using System.Runtime.Remoting;
 using System.Web;
 using System.IO;
+using System.Speech.Synthesis;
 
+using log4net;
 using RfidDrivers.First;
 
 using DigitalPlatform;
@@ -25,8 +27,9 @@ using DigitalPlatform.RFID.UI;
 using DigitalPlatform.CirculationClient;
 using DigitalPlatform.IO;
 using DigitalPlatform.Text;
-using System.Speech.Synthesis;
-using log4net;
+using Microsoft.Win32;
+using Newtonsoft.Json;
+using System.Management;
 
 namespace RfidCenter
 {
@@ -56,11 +59,60 @@ namespace RfidCenter
                 _floatingMessage.Show(this);
             }
 
-            UsbNotification.RegisterUsbDeviceNotification(this.Handle);
+            UsbInfo.StartWatch((add_count, remove_count) =>
+            {
+                // this.OutputHistory($"add_count:{add_count}, remove_count:{remove_count}", 1);
+                string type = "disconnected";
+                if (add_count > 0)
+                    type = "connected";
+
+                BeginRefreshReaders(type, new CancellationToken());
+            },
+            new CancellationToken());
+
+            // UsbNotification.RegisterUsbDeviceNotification(this.Handle);
+            SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
+        }
+
+        private void SystemEvents_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            switch (e.Mode)
+            {
+                case PowerModes.Resume:
+                    Task.Run(() =>
+                    {
+                        Task.Delay(TimeSpan.FromSeconds(5)).Wait();
+                        this.Speak("RFID 中心被唤醒");
+                        BeginRefreshReaders("connected", new CancellationToken());
+                    });
+                    break;
+                case PowerModes.Suspend:
+                    break;
+            }
+        }
+
+        private const int CP_NOCLOSE_BUTTON = 0x200;
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams myCp = base.CreateParams;
+                myCp.ClassStyle = myCp.ClassStyle | CP_NOCLOSE_BUTTON;
+                return myCp;
+            }
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            {
+                notifyIcon1.Visible = true;
+                notifyIcon1.BalloonTipIcon = ToolTipIcon.Info;
+                notifyIcon1.BalloonTipText = "RFID 中心已经启动";
+                notifyIcon1.ShowBalloonTip(1000);
+            }
+
+            SetErrorState("retry", "正在启动");
+
             if (DetectVirus.Detect360() || DetectVirus.DetectGuanjia())
             {
                 MessageBox.Show(this, "rfidcenter 被木马软件干扰，无法启动");
@@ -125,14 +177,29 @@ namespace RfidCenter
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                // 警告关闭
+                DialogResult result = MessageBox.Show(this,
+                    "确实要退出 dp2-RFID 中心?\r\n\r\n(本接口程序提供了 RFID 设备接口功能，一旦退出，这些功能都将无法运行。平时应保持运行状态，将窗口最小化即可)",
+                    "dp2-RFID 中心",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+                if (result != DialogResult.Yes)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }
         }
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
             m_rfidObj?.BeginCapture(false);
 
-            UsbNotification.UnregisterUsbDeviceNotification();
+            SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
+            // UsbNotification.UnregisterUsbDeviceNotification();
 
             _cancelInventory?.Cancel();
 
@@ -150,6 +217,78 @@ namespace RfidCenter
             _driver.ReleaseDriver();
         }
 
+        #region 错误状态
+
+        void SetWholeColor(Color backColor, Color foreColor)
+        {
+            this.Invoke((Action)(() =>
+            {
+                ClientInfo.ProcessControl(this,
+    (o) =>
+    {
+        dynamic d = o;
+        d.BackColor = backColor;
+        d.ForeColor = foreColor;
+    });
+#if NO
+                this.BackColor = backColor;
+                this.ForeColor = foreColor;
+                foreach (TabPage page in this.tabControl_main.TabPages)
+                {
+                    page.BackColor = backColor;
+                    page.ForeColor = foreColor;
+                }
+                this.toolStrip1.BackColor = backColor;
+                this.toolStrip1.ForeColor = foreColor;
+
+                this.menuStrip1.BackColor = backColor;
+                this.menuStrip1.ForeColor = foreColor;
+
+                this.statusStrip1.BackColor = backColor;
+                this.statusStrip1.ForeColor = foreColor;
+#endif
+            }));
+        }
+
+        // 错误状态
+        string _errorState = "normal";    // error/retry/normal
+        // 错误状态描述
+        string _errorStateInfo = "";
+
+        public string ErrorState
+        {
+            get
+            {
+                return _errorState;
+            }
+        }
+
+        public string ErrorStateInfo
+        {
+            get
+            {
+                return _errorStateInfo;
+            }
+        }
+
+        void SetErrorState(string state, string info)
+        {
+            if (state == "error")   // 出现错误，后面不再会重试
+                SetWholeColor(Color.DarkRed, Color.White);
+            else if (state == "retry")   // 出现错误，但后面会自动重试
+                SetWholeColor(Color.DarkOrange, Color.Black);
+            else if (state == "normal")  // 没有错误
+                SetWholeColor(SystemColors.Window, SystemColors.WindowText);
+            else
+                throw new Exception($"无法识别的 state={state}");
+
+            _errorState = state;
+            _errorStateInfo = info;
+        }
+
+        #endregion
+
+
         void UpdateDeviceList(List<Reader> readers)
         {
             if (readers == null)
@@ -165,30 +304,89 @@ namespace RfidCenter
             }));
         }
 
-        void InitializeDriver()
+        List<HintInfo> GetHintTable()
         {
-            try
-            {
-                InitializeDriverResult result = _driver.InitializeDriver("");
-                // 列出所有可用设备名称
-                UpdateDeviceList(result.Readers);
+            string value = ClientInfo.Config.Get("readers", "hint_table");
+            if (string.IsNullOrEmpty(value))
+                return null;
+            return JsonConvert.DeserializeObject<List<HintInfo>>(value);
+        }
 
-                if (result.Value == -1)
-                    this.ShowMessage(result.ErrorInfo, "red", true);
-                else
+        void SetHintTable(List<HintInfo> hint_table)
+        {
+            string value = JsonConvert.SerializeObject(hint_table);
+            ClientInfo.Config.Set("readers", "hint_table", value);
+        }
+
+        private static readonly Object _syncRoot_start = new Object(); // 2019/5/20
+
+        // parameters:
+        //      message 需要显示的提示文字。如果为 null，表示函数自动决定显示“正在初始化 RFID 设备”
+        //      set_hint_table  保存本次获得的暗示表
+        void InitializeDriver(string message = null,
+            bool set_hint_table = false)
+        {
+            lock (_syncRoot_start)
+            {
+                bool success = false;
+                try
                 {
-                    // 一开始就启动捕捉状态
-                    m_rfidObj?.BeginCapture(true);
+                    ClearMessage();
+                    this.SetErrorState("retry", "正在初始化 RFID 设备");
+                    if (message != null)
+                        this.ShowMessage(message);
+                    else
+                        this.ShowMessage("正在初始化 RFID 设备");
+
+                    _driver.ReleaseDriver();
+                    var existing_hint_table = GetHintTable();
+                    InitializeDriverResult result = _driver.InitializeDriver("", set_hint_table ? null : existing_hint_table);
+                    // 列出所有可用设备名称
+                    UpdateDeviceList(result.Readers);
+
+                    if (result.Value == -1)
+                    {
+                        SetErrorState("error", result.ErrorInfo);
+                        this.ShowMessage(result.ErrorInfo, "red", true);
+                    }
+                    else
+                    {
+                        // 记忆
+                        if (set_hint_table || existing_hint_table == null)
+                            SetHintTable(result.HintTable);
+
+                        // 一开始就启动捕捉状态
+                        m_rfidObj?.BeginCapture(false);
+                        m_rfidObj?.BeginCapture(true);
+
+                        // 获得当前读卡器数量
+                        if (result.Readers?.Count == 0)
+                        {
+                            SetErrorState("error", "当前尚未连接读卡器");
+                            this.ShowMessage("当前尚未连接读卡器", "red", true);
+                        }
+                        else
+                        {
+                            SetErrorState("normal", "");
+                            success = true;
+                        }
+                    }
+
+                    this.Invoke((Action)(() =>
+                    {
+                        this.UiState = ClientInfo.Config.Get("global", "ui_state", ""); // Properties.Settings.Default.ui_state;
+                    }));
                 }
-
-                this.Invoke((Action)(() =>
+                catch (Exception ex)
                 {
-                    this.UiState = ClientInfo.Config.Get("global", "ui_state", ""); // Properties.Settings.Default.ui_state;
-                }));
-            }
-            catch (Exception ex)
-            {
-                ShowMessageBox(ex.Message);
+                    SetErrorState("error", ex.Message);
+                    ShowMessageBox(ex.Message);
+                }
+                finally
+                {
+                    if (success)
+                        this.ClearMessage();
+                }
             }
         }
 
@@ -919,6 +1117,37 @@ bool bClickClose = false)
 
         #region ipc channel
 
+        public static bool CallActivate(string strUrl)
+        {
+            IpcClientChannel channel = new IpcClientChannel();
+            IRfid obj = null;
+
+            ChannelServices.RegisterChannel(channel, false);
+            try
+            {
+                obj = (IRfid)Activator.GetObject(typeof(IRfid),
+                    strUrl);
+                if (obj == null)
+                {
+                    // strError = "could not locate Rfid Server";
+                    return false;
+                }
+                obj.ActivateWindow();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (obj != null)
+                {
+                    ChannelServices.UnregisterChannel(channel);
+                }
+            }
+        }
+
         IpcClientChannel m_rfidChannel = new IpcClientChannel();
         IRfid m_rfidObj = null;
 
@@ -1014,7 +1243,6 @@ bool bClickClose = false)
         public static void WriteHtml(WebBrowser webBrowser,
 string strHtml)
         {
-
             HtmlDocument doc = webBrowser.Document;
 
             if (doc == null)
@@ -1134,29 +1362,89 @@ string strHtml)
             m_rfidObj.EnableSendKey(false);
         }
 
+        public void ActivateWindow()
+        {
+            this.Invoke((Action)(() =>
+            {
+                this.Speak("恢复窗口显示");
+                this.ShowInTaskbar = true;
+                this.WindowState = FormWindowState.Normal;
+                // 把窗口翻到前面
+                //this.Activate();
+                API.SetForegroundWindow(this.Handle);
+            }));
+        }
+
         protected override void WndProc(ref Message m)
         {
-            base.WndProc(ref m);
+#if NO
             if (m.Msg == UsbNotification.WmDevicechange)
             {
                 switch ((int)m.WParam)
                 {
                     case UsbNotification.DbtDeviceremovecomplete:
                         //MessageBox.Show(this, "removed"); 
-                        BeginRefreshReaders();
+                        BeginRefreshReaders(new CancellationToken());
                         break;
                     case UsbNotification.DbtDevicearrival:
                         //MessageBox.Show(this, "added");
-                        BeginRefreshReaders();
+                        BeginRefreshReaders(new CancellationToken());
                         break;
                 }
             }
+#endif
+            base.WndProc(ref m);
         }
 
+        int _refreshCount = 0;
+        const int _delaySeconds = 5;
+        Task _refreshTask = null;
+
+        public void BeginRefreshReaders(string action,
+            CancellationToken token)
+        {
+            if (_refreshTask != null)
+            {
+                if (action == "disconnected")
+                {
+                    if (_refreshCount < 1)
+                        _refreshCount++;
+                }
+                else
+                    _refreshCount++;
+                return;
+            }
+
+            // _refreshCount = 2;
+            _refreshTask = Task.Run(() =>
+            {
+                while (_refreshCount-- >= 0)
+                {
+                    Task.Delay(TimeSpan.FromSeconds(_delaySeconds)).Wait(token);
+                    if (token.IsCancellationRequested)
+                        break;
+                    // 迫使重新启动
+                    InitializeDriver();
+                    if (token.IsCancellationRequested)
+                        break;
+
+                    // 如果初始化没有成功，则要追加初始化
+                    if (this.ErrorState == "normal")
+                        break;
+                }
+                _refreshTask = null;
+                _refreshCount = 0;
+            });
+        }
+
+
+#if REMOVED
+        int _refreshCount = 2;
         System.Threading.Timer _refreshTimer = null;
         private static readonly Object _syncRoot_refresh = new Object(); // 2017/5/18
+        const int _delaySeconds = 3;
 
-#if NO
+#if OLD
         void BeginRefreshReaders()
         {
             Task.Run(() =>
@@ -1173,40 +1461,73 @@ string strHtml)
         }
 #endif
 
-        // 2 秒内多次到来的请求，会被合并为一次执行
+        // (_delaySeconds) 秒内多次到来的请求，会被合并为一次执行
         public void BeginRefreshReaders()
         {
+            // Speak("重新初始化 RFID 设备", false, false);
             lock (_syncRoot_refresh)
             {
+                _refreshCount++;    // 2017/5/20
                 if (_refreshTimer == null)
                 {
+                    _refreshCount = 2;
                     _refreshTimer = new System.Threading.Timer(
             new System.Threading.TimerCallback(refreshTimerCallback),
             null,
-            TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+            TimeSpan.FromSeconds(_delaySeconds), TimeSpan.FromSeconds(_delaySeconds));
                 }
             }
         }
 
+        int _inRefresh = 0;
+
         void refreshTimerCallback(object o)
         {
-            // 迫使重新启动
+            int v = Interlocked.Increment(ref this._inRefresh);
+            try
             {
+                // 防止重入
+                if (v > 1)
+                    return;
+
+                // 迫使重新启动
+
+#if NO
                 _driver.RefreshAllReaders();
                 m_rfidObj?.BeginCapture(false);
                 m_rfidObj?.BeginCapture(true);
                 UpdateDeviceList(_driver.Readers);
-            }
+#endif
+                InitializeDriver();
+                // 如果初始化没有成功，则要追加初始化
+                _refreshCount--;
+                if (this.ErrorState != "normal" && _refreshCount > 0)
+                    return;
 
-            lock (_syncRoot_refresh)
-            {
-                if (_refreshTimer != null)
+                // 取消 Timer
+                lock (_syncRoot_refresh)
                 {
-                    _refreshTimer.Dispose();
-                    _refreshTimer = null;
+                    if (_refreshTimer != null)
+                    {
+                        _refreshTimer.Dispose();
+                        _refreshTimer = null;
+                    }
                 }
             }
+            finally
+            {
+                Interlocked.Decrement(ref this._inRefresh);
+            }
+
+#if NO
+            lock (_syncRoot_refresh)
+            {
+
+            }
+#endif
         }
+
+#endif
 
         private void ToolStripMenuItem_exit_Click(object sender, EventArgs e)
         {
@@ -1233,6 +1554,13 @@ string strHtml)
                 else
                     MessageBox.Show(this, "OK");
             }
+
+            // 2019/5/23
+            // 如果当前读卡器中有 'R-PAN ISO15693' 这个型号，那需要重新初始化一下设备。不然后面调用 SetConfig() 时其中的读会失败
+            var reader = _driver.Readers.Find((o) => o.Name == "R-PAN ISO15693");
+            if (reader != null)
+                InitializeDriver("正在关闭和重新打开读卡器。所需时间较长，请耐心等待 ...");
+
         }
 
         private void MenuItem_testSetConfig_Click(object sender, EventArgs e)
@@ -1267,6 +1595,12 @@ string strHtml)
                     goto ERROR1;
                 }
             }
+
+            // 2019/5/23
+            // 如果当前读卡器中有 'R-PAN ISO15693' 这个型号，那需要重新初始化一下设备。不然后面调用 SetConfig() 时其中的读会失败
+            var reader = _driver.Readers.Find((o) => o.Name == "R-PAN ISO15693");
+            if (reader != null)
+                InitializeDriver("正在关闭和重新打开读卡器。所需时间较长，请耐心等待 ...");
 
             {
                 NormalResult result = _driver.SetConfig("*", "beep:-,mode:host,autoCloseRF:-");
@@ -1328,7 +1662,9 @@ rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKe
 前端地址 xxx 经由 http://dp2003.com/dp2library 
 
          * */
-        public void Speak(string strText, bool bError = false)
+        public void Speak(string strText,
+            bool bError = false,
+            bool cancel_before = true)
         {
 #if NO
             string color = "gray";
@@ -1349,10 +1685,11 @@ rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKe
             {
                 try
                 {
-                    this.m_speech.SpeakAsyncCancelAll();
+                    if (cancel_before)
+                        this.m_speech.SpeakAsyncCancelAll();
                     this.m_speech.SpeakAsync(strText);
                 }
-                catch(System.Runtime.InteropServices.COMException)
+                catch (System.Runtime.InteropServices.COMException)
                 {
                     // TODO: 如何报错?
                 }
@@ -1403,9 +1740,9 @@ rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKe
             }
 
             var result = m_rfidObj.ChangePassword("*",
-                inventory_result.Results[0].UID, 
-                "eas/afi", 
-                old_password, 
+                inventory_result.Results[0].UID,
+                "eas/afi",
+                old_password,
                 new_password);
             MessageDlg.Show(this, $"result:{result.ToString()}", "result");
             return;
@@ -1447,6 +1784,46 @@ rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKe
             {
                 MessageBox.Show(this, ExceptionUtil.GetAutoText(ex));
             }
+        }
+
+        private void MenuItem_restart_Click(object sender, EventArgs e)
+        {
+            Task.Run(() =>
+            {
+                InitializeDriver();
+            });
+        }
+
+        private void notifyIcon1_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            this.ShowInTaskbar = true;
+            // notifyIcon1.Visible = false;
+            WindowState = FormWindowState.Normal;
+        }
+
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            if (WindowState == FormWindowState.Minimized)
+            {
+                this.ShowInTaskbar = false;
+                notifyIcon1.Visible = true;
+                notifyIcon1.BalloonTipText = "RFID 中心已经隐藏";
+                notifyIcon1.ShowBalloonTip(1000);
+            }
+        }
+
+        private void MenuItem_detectReader_Click(object sender, EventArgs e)
+        {
+            Task.Run(() =>
+            {
+                InitializeDriver("正在探测读卡器 ...",
+                    true);
+            });
+        }
+
+        private void ToolStripMenuItem_deleteShortcut_Click(object sender, EventArgs e)
+        {
+            ClientInfo.RemoveShortcutFromStartupGroup("dp2-RFID中心", true);
         }
     }
 }

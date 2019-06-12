@@ -10,7 +10,9 @@ using System.Diagnostics;
 
 using DigitalPlatform.GUI;  // for event SetMenuEventHandle
 using DigitalPlatform.Xml;
-using DigitalPlatform.Z3950;
+using DigitalPlatform.OldZ3950;
+using DigitalPlatform.Z3950.UI;
+using DigitalPlatform.CirculationClient;
 
 namespace dp2Catalog
 {
@@ -644,38 +646,38 @@ namespace dp2Catalog
 
             targetinfo.ConvertEACC = ZServerPropertyForm.GetBool(
                 DomUtil.GetAttr(xmlServerNode,
-                "converteacc"));
+                "converteacc"),false);
             targetinfo.FirstFull = ZServerPropertyForm.GetBool(
                 DomUtil.GetAttr(xmlServerNode,
-                "firstfull"));
+                "firstfull"), false);
             targetinfo.DetectMarcSyntax = ZServerPropertyForm.GetBool(
                 DomUtil.GetAttr(xmlServerNode,
-                "detectmarcsyntax"));
+                "detectmarcsyntax"), false);
 
             targetinfo.IgnoreReferenceID = ZServerPropertyForm.GetBool(
     DomUtil.GetAttr(xmlServerNode,
-    "ignorereferenceid"));
+    "ignorereferenceid"), false);
 
             // 对ISBN的预处理
             targetinfo.IsbnForce13 = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"isbn_force13"));
+"isbn_force13"), false);
             targetinfo.IsbnForce10 = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"isbn_force10"));
+"isbn_force10"), false);
             targetinfo.IsbnAddHyphen = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"isbn_addhyphen"));
+"isbn_addhyphen"), false);
             targetinfo.IsbnRemoveHyphen = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"isbn_removehyphen"));
+"isbn_removehyphen"), false);
             targetinfo.IsbnWild = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"isbn_wild"));
+"isbn_wild"), false);
 
             targetinfo.IssnForce8 = ZServerPropertyForm.GetBool(
 DomUtil.GetAttr(xmlServerNode,
-"issn_force8"));
+"issn_force8"), true);
 
             string strPresentPerBatchCount = DomUtil.GetAttr(xmlServerNode,
                 "recsperbatch");
@@ -745,17 +747,17 @@ DomUtil.GetAttr(xmlServerNode,
             // 格式和编码之间的绑定信息
             string strBindingDef = DomUtil.GetAttr(xmlServerNode,
                 "recordSyntaxAndEncodingBinding");
-            targetinfo.Bindings = new RecordSyntaxAndEncodingBindingCollection();
+            targetinfo.Bindings = new DigitalPlatform.Z3950.RecordSyntaxAndEncodingBindingCollection();
             if (String.IsNullOrEmpty(strBindingDef) == false)
                 targetinfo.Bindings.Load(strBindingDef);
 
             // charset nego
             targetinfo.CharNegoUTF8 = ZServerPropertyForm.GetBool(
                 DomUtil.GetAttr(xmlServerNode,
-                "charNegoUtf8"));
+                "charNegoUtf8"), false);
             targetinfo.CharNegoRecordsUTF8 = ZServerPropertyForm.GetBool(
                 DomUtil.GetAttr(xmlServerNode,
-                "charNego_recordsInSeletedCharsets"));
+                "charNego_recordsInSeletedCharsets"), false);
 
             targetinfo.UnionCatalogBindingDp2ServerName =
                 DomUtil.GetAttr(xmlServerNode,
@@ -1032,7 +1034,8 @@ MessageBoxDefaultButton.Button2);
 
                 ZServerPropertyForm dlg = new ZServerPropertyForm();
                 GuiUtil.SetControlFont(dlg, this.Font);
-                dlg.MainForm = this.MainForm;
+                // dlg.MainForm = this.MainForm;
+                dlg.FindDp2Server += Dlg_FindDp2Server;
                 dlg.XmlNode = newxmlnode;
                 dlg.StartPosition = FormStartPosition.CenterScreen;
                 dlg.ShowDialog(this);
@@ -1059,7 +1062,6 @@ MessageBoxDefaultButton.Button2);
                     container.Remove(newnode);
                     parent_xml_node.RemoveChild(newxmlnode);
                 }
-
             }
 
             if (strType == "dir")
@@ -1100,6 +1102,34 @@ MessageBoxDefaultButton.Button2);
                 }
 
             }
+        }
+
+        private void Dlg_FindDp2Server(object sender, 
+            DigitalPlatform.Z3950.UI.FindDp2ServerEventArgs e)
+        {
+            dp2SearchForm dp2_searchform = this.MainForm.GetDp2SearchForm();
+
+            GetDp2ResDlg dlg = new GetDp2ResDlg();
+            GuiUtil.SetControlFont(dlg, this.Font);
+
+            dlg.Text = "请指定要绑定的 dp2library 服务器名";
+#if OLD_CHANNEL
+            dlg.dp2Channels = dp2_searchform.Channels;
+#endif
+            dlg.ChannelManager = this.MainForm;
+            dlg.Servers = this.MainForm.Servers;
+            dlg.EnabledIndices = new int[] { dp2ResTree.RESTYPE_SERVER };
+            dlg.Path = e.Dp2ServerPath;
+
+            dlg.ShowDialog(this);
+
+            if (dlg.DialogResult != DialogResult.OK)
+            {
+                e.Canceled = true;
+                return;
+            }
+
+            e.Dp2ServerPath = dlg.Path;
         }
 
         public static void SetNodeResultCount(TreeNode node,
@@ -1176,7 +1206,8 @@ MessageBoxDefaultButton.Button2);
 
                 ZServerPropertyForm dlg = new ZServerPropertyForm();
                 GuiUtil.SetControlFont(dlg, this.Font);
-                dlg.MainForm = this.MainForm;
+                // dlg.MainForm = this.MainForm;
+                dlg.FindDp2Server += Dlg_FindDp2Server;
                 dlg.XmlNode = newxmlnode;
                 dlg.StartPosition = FormStartPosition.CenterScreen;
                 dlg.ShowDialog(this);
@@ -1265,7 +1296,8 @@ MessageBoxDefaultButton.Button2);
             {
                 ZServerPropertyForm dlg = new ZServerPropertyForm();
                 GuiUtil.SetControlFont(dlg, this.Font);
-                dlg.MainForm = this.MainForm;
+                // dlg.MainForm = this.MainForm;
+                dlg.FindDp2Server += Dlg_FindDp2Server;
                 dlg.XmlNode = TreeNodeInfo.GetXmlNode(node);
                 dlg.InitialResultInfo = TreeNodeInfo.GetExtraInfo(node);    // 2007/7/28
                 dlg.StartPosition = FormStartPosition.CenterScreen;
@@ -1532,7 +1564,7 @@ MessageBoxDefaultButton.Button2);
         public Encoding DefaultRecordsEncoding = Encoding.GetEncoding(936);
         public Encoding DefaultQueryTermEncoding = Encoding.GetEncoding(936);
 
-        public RecordSyntaxAndEncodingBindingCollection Bindings = null;
+        public DigitalPlatform.Z3950.RecordSyntaxAndEncodingBindingCollection Bindings = null;
 
         public bool CharNegoUTF8 = true;
         public bool CharNegoRecordsUTF8 = true;
@@ -1657,136 +1689,7 @@ MessageBoxDefaultButton.Button2);
         }
     }
 
-    // 绑定信息元素
-    public class RecordSyntaxAndEncodingBindingItem
-    {
-        public string RecordSyntaxOID = "";
-        public string RecordSyntaxComment = "";
-        public string EncodingName = "";
-        public string EncodingNameComment = "";
 
-        // 将 "value -- comment" 形态的字符串拆分为"value"和"comment"两个部分
-        public static void ParseValueAndComment(string strText,
-            out string strValue,
-            out string strComment)
-        {
-            int nRet = strText.IndexOf("--");
-            if (nRet == -1)
-            {
-                strValue = strText.Trim();
-                strComment = "";
-                return;
-            }
-
-            strValue = strText.Substring(0, nRet).Trim();
-            strComment = strText.Substring(nRet + 2).Trim();
-        }
-
-        public string RecordSyntax
-        {
-            get
-            {
-                if (String.IsNullOrEmpty(this.RecordSyntaxComment) == true)
-                    return this.RecordSyntaxOID;
-
-                return this.RecordSyntaxOID + " -- " + this.RecordSyntaxComment;
-            }
-            set
-            {
-                string strValue = "";
-                string strComment = "";
-
-                ParseValueAndComment(value, out strValue, out strComment);
-                this.RecordSyntaxOID = strValue;
-                this.RecordSyntaxComment = strComment;
-            }
-        }
-
-        public string Encoding
-        {
-            get
-            {
-                if (String.IsNullOrEmpty(this.EncodingNameComment) == true)
-                    return this.EncodingName;
-                return this.EncodingName + " -- " + this.EncodingNameComment;
-            }
-            set
-            {
-                string strValue = "";
-                string strComment = "";
-
-                ParseValueAndComment(value, out strValue, out strComment);
-                this.EncodingName = strValue;
-                this.EncodingNameComment = strComment;
-            }
-        }
-    }
-
-    // 绑定信息数组
-    public class RecordSyntaxAndEncodingBindingCollection : List<RecordSyntaxAndEncodingBindingItem>
-    {
-        // parameters:
-        //      strBindingString    格式为"syntaxoid1 -- syntaxcomment1|encodingname1 -- encodingcomment1||syntaxoid2 -- syntaxcomment2|encodingname2 -- encodingcomment2"，末尾可能有多余的“||”
-        public void Load(string strBindingString)
-        {
-            this.Clear();
-
-            string[] lines = strBindingString.Split(new string[] { "||" },
-                StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string strSyntax = "";
-                string strEncoding = "";
-                string strLine = lines[i].Trim();
-                if (String.IsNullOrEmpty(strLine) == true)
-                    continue;
-                int nRet = strLine.IndexOf('|');
-                if (nRet != -1)
-                {
-                    strSyntax = strLine.Substring(0, nRet).Trim();
-                    strEncoding = strLine.Substring(nRet + 1).Trim();
-                }
-                else
-                {
-                    strSyntax = strLine;
-                    strEncoding = "";
-                }
-
-                RecordSyntaxAndEncodingBindingItem item = new RecordSyntaxAndEncodingBindingItem();
-                item.RecordSyntax = strSyntax;
-                item.Encoding = strEncoding;
-
-                this.Add(item);
-            }
-        }
-
-        // 返还为字符串形态
-        public string GetString()
-        {
-            string strResult = "";
-            for (int i = 0; i < this.Count; i++)
-            {
-                RecordSyntaxAndEncodingBindingItem item = this[i];
-                strResult += item.RecordSyntax + "|" + item.Encoding + "||";
-            }
-
-            return strResult;
-        }
-
-        public string GetEncodingName(string strRecordSyntaxOID)
-        {
-            for (int i = 0; i < this.Count; i++)
-            {
-                RecordSyntaxAndEncodingBindingItem item = this[i];
-
-                if (item.RecordSyntaxOID == strRecordSyntaxOID)
-                    return item.EncodingName;
-            }
-
-            return null;    // not found
-        }
-
-    }
 
     // 服务器发生改变
     public delegate void ServerChangedEventHandle(object sender,

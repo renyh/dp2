@@ -18,10 +18,10 @@ using DigitalPlatform.Text;
 using DigitalPlatform.Script;
 using DigitalPlatform.MarcDom;
 using DigitalPlatform.Marc;
-using DigitalPlatform.Range;
 
 using DigitalPlatform.Message;
 using DigitalPlatform.rms.Client.rmsws_localhost;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.LibraryServer
 {
@@ -34,6 +34,8 @@ namespace DigitalPlatform.LibraryServer
 
         // 是否允许删除带有下级记录的书目记录
         public bool DeleteBiblioSubRecords = true;
+
+        public Int64 BiblioSearchMaxCount = -1;
 
         // 获得目标记录路径。998$t
         // return:
@@ -561,7 +563,12 @@ namespace DigitalPlatform.LibraryServer
                             continue;
                         }
                         strError = "获得" + strDbTypeCaption + "记录 '" + strSearchRecPath + "' 时出错: " + strError;
-                        goto ERROR1;
+                        // 2019/5/28
+                        result.Value = -1;
+                        result.ErrorCode = ErrorCode.NotFoundObjectFile;
+                        result.ErrorInfo = strError;
+                        return result;
+                        // goto ERROR1;
                     }
 
                     // 2014/12/16
@@ -4920,7 +4927,7 @@ out strError);
 
                     if (cfg.BiblioDbSyntax != strMarcSyntax)
                     {
-                        strError = "所提交保存的 MARC 格式为 '" + strMarcSyntax + "'，和" + strDbTypeCaption + " '" + strBiblioDbName + "' 的 MARC 格式 '" + cfg.BiblioDbSyntax + "' 不符合";
+                        strError = $"所提交保存的 MARC 格式为 '{strMarcSyntax}'，和{strDbTypeCaption} '{strBiblioDbName}' 的 MARC 格式 '{cfg.BiblioDbSyntax}' 不符合";
                         goto ERROR1;
                     }
                 }
@@ -4970,7 +4977,8 @@ out strError);
                     out strError);
                 if (lRet == -1)
                 {
-                    if (channel.ErrorCode == ChannelErrorCode.NotFound)
+                    if (channel.ErrorCode == ChannelErrorCode.NotFound
+                        || channel.ErrorCode == ChannelErrorCode.NotFoundObjectFile)    // 2019/5/28
                     {
                         if (strAction == "checkunique")
                             goto SKIP_MEMO_OLDRECORD;

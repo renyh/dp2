@@ -45,7 +45,7 @@ namespace DigitalPlatform.Drawing
             camDevices = new CameraDevices();
 
             decodingThread = new Thread(DecodeBarcode);
-            // pictureBox1.Paint += pictureBox1_Paint;
+
             resultRectPen = new Pen(Color.Green, 10);
 
             motionDetector = GetDefaultMotionDetector();
@@ -70,6 +70,25 @@ namespace DigitalPlatform.Drawing
                         camDevices.Current.SignalToStop();
                     }
                     camDevices.Current.NewFrame -= Current_NewFrame;
+                }
+            }
+        }
+
+        public bool EnableMotionDetect
+        {
+            get
+            {
+                return motionDetector != null;
+            }
+            set
+            {
+                if (value == true)
+                {
+                    motionDetector = GetDefaultMotionDetector();
+                }
+                else
+                {
+                    motionDetector = null;
                 }
             }
         }
@@ -279,6 +298,12 @@ namespace DigitalPlatform.Drawing
         {
             this.label_message.Visible = !bDisplay;
             this.pictureBox1.Visible = bDisplay;
+        }
+
+        // 2019/6/6
+        public void DisplayCameraList(bool display)
+        {
+            this.panel_camera.Visible = display;
         }
 
         /// <summary>
@@ -568,7 +593,8 @@ namespace DigitalPlatform.Drawing
                     _currentBitmapForDecoding = (Bitmap)eventArgs.Frame.Clone();
                 }
                 //if ((_sourceFrameCount % 2) == 1)
-                BeginInvoke(new Action<Bitmap>(ShowFrame), eventArgs.Frame.Clone());
+                if (this.IsHandleCreated)   // 2019/6/2
+                    BeginInvoke(new Action<Bitmap>(ShowFrame), eventArgs.Frame.Clone());
                 //_sourceFrameCount++;
                 /*
                     if (motionLevel < 0.5)
@@ -592,6 +618,7 @@ namespace DigitalPlatform.Drawing
         int _iFrameCount = 0;
         float motionLevel = 0F;
 
+        // 注意，本函数以内，负责释放 frame
         private void ShowFrame(Bitmap frame)
         {
             try
@@ -607,7 +634,7 @@ namespace DigitalPlatform.Drawing
                 // pictureBox1.Image = frame;
                 // 2018/10/23
                 ImageUtil.SetImage(pictureBox1, frame);
-
+                frame = null;
 #if NO
             if (_bFirstImageFilled == false)
             {
@@ -634,6 +661,11 @@ namespace DigitalPlatform.Drawing
             catch
             {
 
+            }
+            finally
+            {
+                if (frame != null)
+                    frame.Dispose();
             }
         }
 

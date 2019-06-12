@@ -29,6 +29,7 @@ using DigitalPlatform.CirculationClient;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.Drawing;
+using System.Text;
 
 namespace dp2Circulation
 {
@@ -393,7 +394,14 @@ namespace dp2Circulation
         /// </summary>
         public EntityForm()
         {
-            InitializeComponent();
+            try
+            {
+                InitializeComponent();
+            }
+            catch
+            {
+
+            }
 
             this.MemoNumbers = new List<CallNumberForm.MemoTailNumber>();
         }
@@ -2474,9 +2482,9 @@ true);
                     return;
                 }
                 CloseBrowseWindow();
-                e.Cancel = true;
-                this.ShowMessage("浏览小窗已经关闭。再关闭一次可关闭种册窗", "yellow", true);
-                return;
+                //e.Cancel = true;
+                //this.ShowMessage("浏览小窗已经关闭。再关闭一次可关闭种册窗", "yellow", true);
+                //return;
             }
 
             if (this.EntitiesChanged == true
@@ -3216,8 +3224,6 @@ true);
                 if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "2.91") < 0)
                     bLoadSubrecords = false;
 
-                string strXml = "";
-                string strSubRecords = "";
                 int nRet = this.LoadBiblioRecord(
                     channel,
                     strBiblioRecPath,
@@ -3225,8 +3231,8 @@ true);
                     false,
                     bLoadSubrecords,
                     out strOutputBiblioRecPath,
-                    out strXml,
-                    out strSubRecords,
+                    out string strXml,
+                    out string strSubRecords,
                     out strError);
                 if (nRet == -1)
                 {
@@ -3241,6 +3247,13 @@ true);
                     if (String.IsNullOrEmpty(strTotalError) == false)
                         strTotalError += "\r\n";
                     strTotalError += strErrorText;
+
+                    // 2019/5/28
+                    // 如果书目记录不存在，则沿用strBiblioRecPath的路径
+                    if (String.IsNullOrEmpty(strOutputBiblioRecPath) == true)
+                    {
+                        strOutputBiblioRecPath = strBiblioRecPath;
+                    }
                 }
                 else if (nRet == 0)
                 {
@@ -4476,15 +4489,12 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
         /// <returns>-1: 有错。此时不排除有些信息保存成功。0: 成功。</returns>
         public int DoSaveAll(string strStyle = "displaysuccess,verifydata,searchdup")
         {
-            // bool bBiblioSaved = false;
             int nRet = 0;
-            // string strText = "";
-            // int nErrorCount = 0;
+
             SavedInfo info = new SavedInfo();
 
             bool bDisplaySuccess = StringUtil.IsInList("displaysuccess", strStyle);
             bool bVerifyData = StringUtil.IsInList("verifydata", strStyle);
-            // bool bForceVerifyData = StringUtil.IsInList("forceverifydata", strStyle);
 
             bool bVerified = false;
 
@@ -4955,7 +4965,7 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
         // bool _browseWindowSelected = false;     // 小浏览窗口是否被确定选择记录而关闭的
         bool _willCloseBrowseWindow = false;    // 是否要在检索结束后自动关闭浏览窗口(一般是因为中途 X 按钮被触发过了)
         // 进行检索
-        private void button_search_Click(object sender, EventArgs e)
+        private async void button_search_Click(object sender, EventArgs e)
         {
             string strError = "";
 
@@ -4965,6 +4975,7 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
                 int nRet = 0;
                 bool bDisplayClickableError = false;
                 long lHitCount = 0;
+                bool browse_visible = false;
 
                 _willCloseBrowseWindow = false;
                 // _browseWindowSelected = false;
@@ -4978,7 +4989,7 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
                 channel.Timeout = TimeSpan.FromMinutes(2);
 
                 Progress.Style = StopStyle.EnableHalfStop;
-                Progress.OnStop += new StopEventHandler(this.DoStop);
+                Progress.OnStop += Progress_OnStop;
                 Progress.Initial("正在检索 ...");
                 Progress.BeginLoop();
 
@@ -5106,7 +5117,10 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
                         }
 
                         if (lHitCount > 1)
+                        {
                             this.ShowBrowseWindow(-1);
+                            browse_visible = true;
+                        }
 
                         // 从此位置以后，_willCloseBrowseWindow 如果变为 true 则表示要立即终止循环和处理
 
@@ -5174,6 +5188,66 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
                         }
                     }
 
+                    if (this.SearchZ3950)
+                    {
+                        nRet = Program.MainForm.LoadUseList(true, out strError);
+                        if (nRet == -1)
+                            goto ERROR1;
+
+                        {
+                            string xmlFileName = Path.Combine(Program.MainForm.UserDir, "zserver.xml");
+                            var result = _zsearcher.LoadServer(xmlFileName, Program.MainForm.Marc8Encoding);
+                            if (result.Value == -1)
+                                this.ShowMessage(result.ErrorInfo, "red", true);
+                        }
+                        this.ShowMessage("等待 Z39.50 检索响应 ...");
+                        this.browseWindow?.ShowMessage("等待 Z39.50 检索响应 ...");
+
+                        {
+                            NormalResult result = await _zsearcher.Search(
+            Program.MainForm.UseList,   // UseCollection useList,
+            Program.MainForm.IsbnSplitter,
+                            this.textBox_queryWord.Text,
+                            this.MaxSearchResultCount,  // 1000
+                            strFromStyle,
+                            strMatchStyle,
+                            (c, r) =>
+                            {
+                                lHitCount += r.ResultCount;
+
+                                if (r.ResultCount > 0 && browse_visible == false)
+                                {
+                                    TryShowBrowseWindow();
+                                    browse_visible = true;
+                                }
+
+                                this.Invoke((Action)(() =>
+                                {
+                                    ListViewItem item = new ListViewItem();
+                                    item.Tag = c;
+                                    _zchannelTable[c] = item;
+                                    this.browseWindow.RecordsList.Items.Add(item);
+                                    BiblioSearchForm.UpdateCommandLine(item, c, r);
+                                }));
+                            },
+                            (c, r) =>
+                            {
+                                this.Invoke((Action)(() =>
+                                {
+                                    ListViewItem item = (ListViewItem)_zchannelTable[c];
+                                    if (r.Records != null)
+                                        FillList(c._fetched,
+                                            c.ZClient.ForcedRecordsEncoding == null ? c.TargetInfo.DefaultRecordsEncoding : c.ZClient.ForcedRecordsEncoding,
+                                            c.ServerName,
+                                            r.Records,
+                                            item);
+                                    BiblioSearchForm.UpdateCommandLine(item, c, r);
+                                }));
+                            }
+                            );
+                        }
+                    }
+
                     if (bNeedShareSearch == true)
                     {
                         this.ShowMessage("等待共享检索响应 ...");
@@ -5237,11 +5311,13 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
         && this._floatingMessage.InDelay() == false)
                         this.ClearMessage();
 
+                    this.browseWindow?.ShowMessage("");
+
                     if (Program.MainForm.MessageHub != null)
                         Program.MainForm.MessageHub.SearchResponseEvent -= MessageHub_SearchResponseEvent;
 
                     Progress.EndLoop();
-                    Progress.OnStop -= new StopEventHandler(this.DoStop);
+                    Progress.OnStop -= Progress_OnStop;
                     Progress.Initial("");
                     Progress.Style = StopStyle.None;
 
@@ -5270,7 +5346,6 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
                         bDisplayClickableError = true;
                     }
                 }
-
 
                 if (_willCloseBrowseWindow == true)
                     CloseBrowseWindow();
@@ -5302,6 +5377,197 @@ dp2Circulation 版本: dp2Circulation, Version=3.2.7016.36344, Culture=neutral, 
             this.textBox_queryWord.SelectAll();
              * */
             this.SwitchFocus(BIBLIO_SEARCHTEXT);
+        }
+
+        private void Progress_OnStop(object sender, StopEventArgs e)
+        {
+            _zsearcher.Stop();
+            this.DoStop(sender, e);
+        }
+
+        // zchannel --> ListViewItem
+        Hashtable _zchannelTable = new Hashtable();
+        Z3950Searcher _zsearcher = new Z3950Searcher();
+
+        async Task LoadNextBatch(bool all)
+        {
+            if (this.browseWindow.RecordsList.SelectedItems.Count != 1)
+                return;
+
+            _zsearcher.InSearching = true;
+            this.EnableControls(false);
+            stop.OnStop += OnZ3950LoadStop;
+            stop.Initial("正在装载 Z39.50 检索内容 ...");
+            stop.BeginLoop();
+            try
+            {
+                ListViewItem item = this.browseWindow.RecordsList.SelectedItems[0];
+                ZClientChannel channel = (ZClientChannel)item.Tag;
+
+                if (channel._fetched >= channel._resultCount)
+                {
+                    this.browseWindow.ShowMessageBox($"{channel.ServerName} 的命中结果已经全部载入");
+                    return;
+                }
+
+                while (channel._fetched < channel._resultCount)
+                {
+                    if (_zsearcher.InSearching == false)
+                        break;
+
+                    stop.SetMessage($"正在装载 Z39.50 检索内容({channel._fetched}-) ...");
+
+                    var present_result = await Z3950Searcher.FetchRecords(channel,
+                        all ? 100 : 10);
+
+                    {
+                        if (present_result.Records != null)
+                            FillList(channel._fetched,
+                channel.ZClient.ForcedRecordsEncoding == null ? channel.TargetInfo.DefaultRecordsEncoding : channel.ZClient.ForcedRecordsEncoding,
+                channel.ServerName,
+                present_result.Records, item);
+                        BiblioSearchForm.UpdateCommandLine(item, channel, present_result);
+                    }
+
+                    if (present_result.Value == -1)
+                        break;
+                    else
+                        channel._fetched += present_result.Records.Count;
+
+                    if (all == false)
+                        break;
+                }
+            }
+            finally
+            {
+                stop.EndLoop();
+                stop.OnStop -= OnZ3950LoadStop;
+                stop.Initial("");
+                stop.HideProgress();
+
+                this.EnableControls(true);
+                _zsearcher.InSearching = false;
+            }
+        }
+
+        private void OnZ3950LoadStop(object sender, StopEventArgs e)
+        {
+            _zsearcher.Stop();
+        }
+
+        async void menu_loadNextBatch_Click(object sender, EventArgs e)
+        {
+            await LoadNextBatch(false);
+        }
+
+        async void menu_loadRestAllBatch_Click(object sender, EventArgs e)
+        {
+            await LoadNextBatch(true);
+        }
+
+        // (Z39.50)填入浏览记录
+        void FillList(int start,
+            Encoding encoding,
+            string strLibraryName,
+            DigitalPlatform.Z3950.RecordCollection records,
+            ListViewItem insert_pos)
+        {
+            // int index = insert_pos.ListView.Items.IndexOf(insert_pos);
+
+            int i = 0;
+            foreach (var record in records)
+            {
+                string strRecPath = $"{start + i + 1}@{strLibraryName}";
+
+                // 把byte[]类型的MARC记录转换为机内格式
+                // return:
+                //		-2	MARC格式错
+                //		-1	一般错误
+                //		0	正常
+                int nRet = MarcLoader.ConvertIso2709ToMarcString(record.m_baRecord,
+                    encoding == null ? Encoding.GetEncoding(936) : encoding,
+                    true,
+                    out string strMARC,
+                    out string strError);
+                if (nRet == -1)
+                {
+                    AddErrorLine("记录 " + strRecPath + " 转换为 MARC 机内格式时出错: " + strError);
+                    goto CONTINUE;
+                }
+
+                string strMarcSyntax = "";
+                if (record.m_strSyntaxOID == "1.2.840.10003.5.1")
+                    strMarcSyntax = "unimarc";
+                else if (record.m_strSyntaxOID == "1.2.840.10003.5.10")
+                    strMarcSyntax = "usmarc";
+                nRet = MyForm.BuildMarcBrowseText(
+    strMarcSyntax,
+    strMARC,
+    out string strBrowseText,
+    out string strColumnTitles,
+    out strError);
+                if (nRet == -1)
+                {
+                    AddErrorLine("记录 " + strRecPath + " 创建浏览格式时出错: " + strError);
+                    goto CONTINUE;
+                }
+
+                _browseTitleTable[strMarcSyntax] = strColumnTitles;
+
+                // 将书目记录放入 m_biblioTable
+                {
+                    // TODO: MARC 格式转换为 XML 格式
+                    nRet = MarcUtil.Marc2Xml(strMARC,
+                        strMarcSyntax,
+                        out string strXml,
+                        out strError);
+                    if (nRet == -1)
+                    {
+                        AddErrorLine("记录 " + strRecPath + " 转换为 XML 格式时出错: " + strError);
+                        goto CONTINUE;
+                    }
+
+                    _browseTitleTable[strMarcSyntax] = strColumnTitles;
+
+                    BiblioInfo info = new BiblioInfo
+                    {
+                        OldXml = strXml,
+                        RecPath = strRecPath,
+                        Timestamp = null,
+                        Format = strMarcSyntax
+                    };
+                    lock (this.browseWindow.BiblioTable)
+                    {
+                        this.browseWindow.BiblioTable[strRecPath] = info;
+                    }
+                }
+
+                List<string> column_list = StringUtil.SplitList(strBrowseText, '\t');
+                string[] cols = new string[column_list.Count];
+                column_list.CopyTo(cols);
+
+                ListViewItem item = null;
+                this.Invoke((Action)(() =>
+                {
+                    int index = insert_pos.ListView.Items.IndexOf(insert_pos);
+
+                    item = Global.InsertNewLine(
+this.browseWindow.RecordsList,
+strRecPath,
+cols,
+index);// index + i
+                }
+                ));
+
+                if (item != null)
+                    item.BackColor = Color.LightGreen;
+
+                CONTINUE:
+                i++;
+            }
+
+            // Debug.Assert(e.Start == _searchParam._searchCount, "");
+            return;
         }
 
         // 开始检索共享书目
@@ -5621,13 +5887,21 @@ out strError);
 ));
         }
 
-        void CloseBrowseWindow()
+        public void CloseBrowseWindow()
         {
             if (this.browseWindow != null)
             {
                 this.browseWindow.Close();
                 this.browseWindow = null;
             }
+        }
+
+        void TryShowBrowseWindow()
+        {
+            this.BeginInvoke(new Action(() =>
+            {
+                ShowBrowseWindow(-1);
+            }));
         }
 
         // 显示 浏览小窗口
@@ -5688,6 +5962,9 @@ out strError);
 
                 this.browseWindow.OpenDetail -= new OpenDetailEventHandler(browseWindow_OpenDetail);
                 this.browseWindow.OpenDetail += new OpenDetailEventHandler(browseWindow_OpenDetail);
+
+                this.browseWindow.LoadNext -= BrowseWindow_LoadNext;
+                this.browseWindow.LoadNext += BrowseWindow_LoadNext;
             }
             else
             {
@@ -5704,6 +5981,14 @@ out strError);
                 this.browseWindow.BringToFront();
                 this.browseWindow.RecordsList.Items.Clear();
             }
+        }
+
+        private void BrowseWindow_LoadNext(object sender, LoadNextBatchEventArgs e)
+        {
+            if (e.All)
+                menu_loadRestAllBatch_Click(sender, new EventArgs());
+            else
+                menu_loadNextBatch_Click(sender, new EventArgs());
         }
 
         /*
@@ -5757,8 +6042,11 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5712.38964, Culture=neutral, 
         {
             if (browseWindow != null)
             {
+                if (_zsearcher.InSearching)
+                    _zsearcher.Stop();
+                this.browseWindow.StoreList();
                 Program.MainForm.AppInfo.UnlinkFormState(browseWindow);
-                this.browseWindow = null;
+                // this.browseWindow = null;
             }
         }
 
@@ -5789,7 +6077,9 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5712.38964, Culture=neutral, 
                 BiblioInfo info = e.BiblioInfos[0];
                 Debug.Assert(info != null, "");
 
-                if (this.stop.IsInLoop == true)
+                bool is_z3950 = info.RecPath.IndexOf("@") != -1;
+                if (this.stop.IsInLoop == true
+                    && is_z3950 == false)
                 {
                     this.AddToPendingList(info.RecPath, "");
                     return;
@@ -9176,6 +9466,7 @@ MessageBoxDefaultButton.Button1);
                                     "System.Runtime.Serialization.dll",
 
                                     Environment.CurrentDirectory + "\\digitalplatform.dll",
+                                    Environment.CurrentDirectory + "\\digitalplatform.core.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.IO.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.Text.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.Xml.dll",
@@ -9309,6 +9600,7 @@ MessageBoxDefaultButton.Button1);
                                     "system.drawing.dll",
                                     "System.Runtime.Serialization.dll",
 
+                                    Environment.CurrentDirectory + "\\digitalplatform.core.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.IO.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.Text.dll",
@@ -9459,6 +9751,7 @@ MessageBoxDefaultButton.Button1);
                                     "system.drawing.dll",
                                     "System.Runtime.Serialization.dll",
 
+                                    Environment.CurrentDirectory + "\\digitalplatform.core.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.IO.dll",
                                     Environment.CurrentDirectory + "\\digitalplatform.Text.dll",
@@ -10093,6 +10386,9 @@ MessageBoxDefaultButton.Button1);
             // 源记录就是 ？
             if (bSaveAs == true)
             {
+                string strOldBiblioDbName = this.BiblioDbName;
+
+                // TODO: 注意检查目标书目库的 MARC 格式是否和当前 MARC 记录相同
                 this.BiblioRecPath = dlg.RecPath;
 
                 // 提交所有保存请求
@@ -10106,6 +10402,10 @@ MessageBoxDefaultButton.Button1);
                     strError = "保存操作出错";
                     goto ERROR1;
                 }
+
+                // 2019/5/8
+                if (this.BiblioDbName != strOldBiblioDbName)
+                    LoadRecordOld(this.BiblioRecPath, "", false);
 
                 return;
             }
@@ -10459,6 +10759,7 @@ MessageBoxDefaultButton.Button1);
 
         private void toolStripButton_prev_Click(object sender, EventArgs e)
         {
+#if NO
             if (Control.ModifierKeys == Keys.Control)
             {
                 this.ClearMessage();
@@ -10473,10 +10774,13 @@ MessageBoxDefaultButton.Button1);
                 // TODO: 可以改进为调用Safe...，这样就不必在意Disable按钮来防止重入了
                 this.LoadRecordOld(this.BiblioRecPath, "prev", true);
             }
+#endif
+            LoadPrevNextRecord("prev");
         }
 
         private void toolStripButton_next_Click(object sender, EventArgs e)
         {
+#if NO
             if (Control.ModifierKeys == Keys.Control)
             {
                 this.ClearMessage();
@@ -10484,17 +10788,93 @@ MessageBoxDefaultButton.Button1);
                 if (string.IsNullOrEmpty(strRecPath))
                     this.ShowMessage("无法移动", "yellow", true);
                 else
-                    this.LoadRecordOld(strRecPath, "", true);
+                {
+                    if (strRecPath.IndexOf("@") == -1)
+                        this.LoadRecordOld(strRecPath, "", true);
+                    else
+                    {
+                        BiblioSearchForm form = Program.MainForm.GetTopChildWindow<BiblioSearchForm>();
+                        // TODO: if form == null
+                        BiblioInfo info = form.GetBiblioInfo(strRecPath);
+                        if (info == null)
+                            this.ShowMessage($"以路径 {strRecPath} 获得 BiblioInfo 失败", "yellow", true);
+                        else
+                            this.LoadRecord(info, true, out string strTotalError, true);
+                    }
+                }
             }
             else
             {
                 this.LoadRecordOld(this.BiblioRecPath, "next", true);
             }
+#endif
+            LoadPrevNextRecord("next");
         }
 
-        // TODO: 后面改为每个 EntityForm 记载自己对应的 BiblioSearchForm，就不用找当前顶层的 BiblioSearchForm 了
-        static string GetPrevNextRecPath(string strStyle)
+        void LoadPrevNextRecord(string direction)
         {
+            bool resultSet = !(Control.ModifierKeys == Keys.Control);
+            //if (Control.ModifierKeys == Keys.Control
+            //    || string.IsNullOrEmpty(this.BiblioRecPath) == true)
+            if (resultSet)
+            {
+                // 在检索命中结果中翻看
+                this.ClearMessage();
+                string strRecPath = GetPrevNextRecPath(direction);
+                if (string.IsNullOrEmpty(strRecPath))
+                    this.ShowMessage("无法前后翻动", "yellow", true);
+                else
+                {
+                    if (strRecPath.IndexOf("@") == -1)
+                        this.LoadRecordOld(strRecPath, "", true);
+                    else
+                    {
+                        BiblioInfo info = null;
+                        if (this.browseWindow != null)
+                        {
+                            // 从 browseWindow 中取 BiblioInfo 对象
+                            info = this.browseWindow.GetBiblioInfo(strRecPath);
+                        }
+                        else
+                        {
+                            BiblioSearchForm form = Program.MainForm.GetTopChildWindow<BiblioSearchForm>();
+                            if (form == null)
+                            {
+                                this.ShowMessage("无法前后翻动 1", "yellow", true);
+                                return;
+                            }
+                            else
+                                info = form.GetBiblioInfo(strRecPath);
+                        }
+
+                        if (info == null)
+                            this.ShowMessage($"以路径 {strRecPath} 获得 BiblioInfo 失败", "yellow", true);
+                        else
+                            this.LoadRecord(info, true, out string strTotalError, true);
+                    }
+                }
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(this.BiblioRecPath) == true)
+                {
+                    this.ShowMessage("无法前后翻动(因记录路径为空)", "yellow", true);
+                    return;
+                }
+
+                // 在同一数据库中按照 ID 前后翻看
+                this.LoadRecordOld(this.BiblioRecPath, direction, true);
+            }
+        }
+
+
+        // TODO: 后面改为每个 EntityForm 记载自己对应的 BiblioSearchForm，就不用找当前顶层的 BiblioSearchForm 了
+        string GetPrevNextRecPath(string strStyle)
+        {
+            // TODO: 注意实现 EntityForm 内检索场景下的前后浏览记录寻找
+            if (this.browseWindow != null && this.browseWindow.RecPaths.Count > 0)
+                return this.browseWindow.GetPrevNextRecPath(strStyle);
+
             BiblioSearchForm form = Program.MainForm.GetTopChildWindow<BiblioSearchForm>();
             if (form == null)
             {
@@ -10507,10 +10887,15 @@ MessageBoxDefaultButton.Button1);
                     return "";
             }
 
-            ListViewItem item = form.MoveSelectedItem(strStyle);
+            REDO:
+            ListViewItem item = BiblioSearchForm.MoveSelectedItem(form.ListViewRecords, strStyle);
             if (item == null)
                 return "";
-            return ListViewUtil.GetItemText(item, 0);
+            string text = ListViewUtil.GetItemText(item, 0);
+            // 遇到 Z39.50 命令行，要跳过去
+            if (BiblioSearchForm.IsCmdLine(text))
+                goto REDO;
+            return text;
         }
 
         string m_strFocusedPart = "";

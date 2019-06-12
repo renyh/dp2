@@ -27,13 +27,12 @@ using DigitalPlatform.Text;
 using DigitalPlatform.Script;
 using DigitalPlatform.MarcDom;
 using DigitalPlatform.Marc;
-using DigitalPlatform.Range;
-using DigitalPlatform.Drawing;  // ShrinkPic()
 
 using DigitalPlatform.Message;
 using DigitalPlatform.rms.Client.rmsws_localhost;
 using Jint;
 using Jint.Native;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.LibraryServer
 {
@@ -774,7 +773,6 @@ namespace DigitalPlatform.LibraryServer
 
             if (string.IsNullOrEmpty(strReaderBarcode) == false)
             {
-                string strOutputCode = "";
                 // 把二维码字符串转换为读者证条码号
                 // parameters:
                 //      strReaderBcode  [out]读者证条码号
@@ -783,7 +781,7 @@ namespace DigitalPlatform.LibraryServer
                 //      0       所给出的字符串不是读者证号二维码
                 //      1       成功      
                 nRet = DecodeQrCode(strReaderBarcode,
-                    out strOutputCode,
+                    out string strOutputCode,
                     out strError);
                 if (nRet == -1)
                     goto ERROR1;
@@ -1195,14 +1193,13 @@ namespace DigitalPlatform.LibraryServer
                     // 检查评估模式下书目记录路径
                     if (this.TestMode == true || sessioninfo.TestMode == true)
                     {
-                        string strBiblioDbName = "";
                         // 根据实体库名, 找到对应的书目库名
                         // return:
                         //      -1  出错
                         //      0   没有找到
                         //      1   找到
                         nRet = this.GetBiblioDbNameByItemDbName(strItemDbName,
-                            out strBiblioDbName,
+                            out string strBiblioDbName,
                             out strError);
                         if (nRet == -1)
                         {
@@ -1372,14 +1369,13 @@ namespace DigitalPlatform.LibraryServer
                     string strReaderType = DomUtil.GetElementText(readerdom.DocumentElement,
                         "readerType");
 
-                    Calendar calendar = null;
                     // return:
                     //      -1  出错
                     //      0   没有找到日历
                     //      1   找到日历
                     nRet = GetReaderCalendar(strReaderType,
                         strLibraryCode,
-                        out calendar,
+                        out Calendar calendar,
                         out strError);
                     if (nRet == -1 || nRet == 0)
                         goto ERROR1;
@@ -1457,7 +1453,9 @@ namespace DigitalPlatform.LibraryServer
                         bRenew,
                         strLibraryCode, // 读者记录所在读者库的馆代码
                         strAccessParameters,
+                        strOutputReaderRecPath,
                         ref readerdom,
+                        strOutputItemRecPath,
                         ref itemdom,
                         ref debugInfo,
                         out strError);
@@ -2363,7 +2361,7 @@ start_time_1,
             // 顺便也把占空间的一些元素剪裁了
             // 注：只有当 borrows 元素被裁剪的时候，fingerprint 元素才会被裁剪。所以判断读者记录是否被裁剪的时候，只要判断 borrows 元素的 clipping 属性就可以了
             ClipElement(target.DocumentElement, "fingerprint");
-
+            ClipElement(target.DocumentElement, "face");
             return target.OuterXml;
         }
 
@@ -3339,7 +3337,9 @@ start_time_1,
         int CheckCanReturn(
             string strReaderLibraryCode,
             Account account,
+            string reader_recpath,
             XmlDocument readerdom,
+            string item_recpath,
             XmlDocument itemdom,
             ref StringBuilder debugInfo,
             out string strError)
@@ -3462,11 +3462,11 @@ start_time_1,
 
                     SetValue(engine,
                         "patron",
-                        readerdom == null ? null : new PatronRecord(readerdom));
+                        readerdom == null ? null : new PatronRecord(readerdom, reader_recpath));
 
                     SetValue(engine,
     "item",
-    itemdom == null ? null : new ItemRecord(itemdom));
+    itemdom == null ? null : new ItemRecord(itemdom, item_recpath));
 
                     engine.Execute("var DigitalPlatform = importNamespace('DigitalPlatform');\r\n"
                         + strScript) // execute a statement
@@ -3524,7 +3524,9 @@ start_time_1,
             string strReaderLibraryCode,
             bool bRenew,
             Account account,
+            string reader_recpath,
             XmlDocument readerdom,
+            string item_recpath,
             XmlDocument itemdom,
             ref StringBuilder debugInfo,
             out string strError)
@@ -3661,11 +3663,11 @@ account == null ? null : new AccountRecord(account));
 
                     SetValue(engine,
                         "patron",
-                        readerdom == null ? null : new PatronRecord(readerdom));
+                        readerdom == null ? null : new PatronRecord(readerdom, reader_recpath));
 
                     SetValue(engine,
     "item",
-    itemdom == null ? null : new ItemRecord(itemdom));
+    itemdom == null ? null : new ItemRecord(itemdom, item_recpath));
 
                     engine.Execute("var DigitalPlatform = importNamespace('DigitalPlatform');\r\n"
                         + strScript) // execute a statement
@@ -3757,7 +3759,9 @@ account == null ? null : new AccountRecord(account));
             bool bRenew,
             string strLibraryCode,
             string strAccessParameters,
+            string reader_recpath,
             ref XmlDocument readerdom,
+            string item_recpath,
             ref XmlDocument itemdom,
             ref StringBuilder debugInfo,
             out string strError)
@@ -3914,7 +3918,9 @@ account == null ? null : new AccountRecord(account));
                 strLibraryCode,
                 bRenew,
                 account,
+                reader_recpath,
                 readerdom,
+                item_recpath,
                 itemdom,
                 ref debugInfo,
                 out strError);
@@ -4203,8 +4209,6 @@ account == null ? null : new AccountRecord(account));
                 int nThisTypeCount = nodes.Count;
 
                 // 得到该类图书的册数限制配置
-                MatchResult matchresult;
-                string strParamValue = "";
                 // return:
                 //      reader和book类型均匹配 算4分
                 //      只有reader类型匹配，算3分
@@ -4216,8 +4220,8 @@ account == null ? null : new AccountRecord(account));
                     strReaderType,
                     strBookType,
                     "可借册数",
-                    out strParamValue,
-                    out matchresult,
+                    out string strParamValue,
+                    out MatchResult matchresult,
                     out strError);
                 if (nRet == -1 || nRet < 4)
                 {
@@ -4404,10 +4408,8 @@ account == null ? null : new AccountRecord(account));
             if (prices.Count == 0)
                 return 0;   // 都没有价格字符串，也就无法进行计算了
 
-            List<string> results = null;
-
             nRet = PriceUtil.TotalPrice(prices,
-                out results,
+                out List<string> results,
                 out strError);
             if (nRet == -1)
                 return -1;
@@ -4417,7 +4419,6 @@ account == null ? null : new AccountRecord(account));
                 strError = "TotalPrice()出错。册价格汇总后居然为空。";
                 return -1;
             }
-
 
             if (results.Count > 1)
             {
@@ -6079,6 +6080,7 @@ account == null ? null : new AccountRecord(account));
                             ref itemdom,
                             bForce,
                             bItemBarcodeDup,  // 若条码号足以定位，则不记载实体记录路径
+                            strOutputReaderRecPath,
                             strOutputItemRecPath,
                             sessioninfo.UserID, // 还书操作者
                             strOperTime,
@@ -14053,6 +14055,7 @@ out string strError)
             ref XmlDocument itemdom,
             bool bForce,
             bool bItemBarcodeDup,
+            string strReaderRecPath,
             string strItemRecPath,
             string strReturnOperator,
             string strOperTime,
@@ -14210,7 +14213,9 @@ out string strError)
             nRet = CheckCanReturn(
                 strLibraryCode,
                 sessioninfo.Account,
+                strReaderRecPath,
                 readerdom,
+                strItemRecPath,
                 itemdom,
                 ref debugInfo,
                 out strError);

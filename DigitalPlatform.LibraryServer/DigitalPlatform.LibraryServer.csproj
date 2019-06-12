@@ -18,7 +18,7 @@
     </SccAuxPath>
     <SccProvider>
     </SccProvider>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileUpgradeFlags>
     </FileUpgradeFlags>
     <OldToolsVersion>2.0</OldToolsVersion>
@@ -76,8 +76,8 @@
     <Reference Include="Jint, Version=0.0.0.0, Culture=neutral, PublicKeyToken=2e92ba9c8d81157f, processorArchitecture=MSIL">
       <HintPath>..\packages\Jint.2.11.58\lib\net451\Jint.dll</HintPath>
     </Reference>
-    <Reference Include="Jurassic, Version=2.1.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\Jurassic.2.2.2\lib\net35\Jurassic.dll</HintPath>
+    <Reference Include="Jurassic, Version=3.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Jurassic.3.0.0\lib\net45\Jurassic.dll</HintPath>
     </Reference>
     <Reference Include="Lucene.Net">
       <HintPath>.\Lucene.Net.dll</HintPath>
@@ -245,10 +245,6 @@
       <Project>{74242530-EF96-457E-852D-5C21A3EA8449}</Project>
       <Name>DigitalPlatform.MarcKernel</Name>
     </ProjectReference>
-    <ProjectReference Include="..\DigitalPlatform.MarcQuery\DigitalPlatform.MarcQuery.csproj">
-      <Project>{57fe2fb1-4134-409b-876c-8a1c0776b498}</Project>
-      <Name>DigitalPlatform.MarcQuery</Name>
-    </ProjectReference>
     <ProjectReference Include="..\DigitalPlatform.Message\DigitalPlatform.Message.csproj">
       <Project>{D0C73839-5A5E-41BA-B1E5-104EEC488E33}</Project>
       <Name>DigitalPlatform.Message</Name>
@@ -286,8 +282,12 @@
       <Name>DigitalPlatform</Name>
     </ProjectReference>
     <ProjectReference Include="..\dp-library\DigitalPlatform.Core\DigitalPlatform.Core.csproj">
-      <Project>{fe846fac-d4cb-4013-ad69-39e72e31d204}</Project>
+      <Project>{c5b517c1-7344-45a5-89dc-06a9b130ae36}</Project>
       <Name>DigitalPlatform.Core</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\dp-library\DigitalPlatform.MarcQuery\DigitalPlatform.MarcQuery.csproj">
+      <Project>{623ea980-be0a-46bb-9e3e-dd8d0fe54f6f}</Project>
+      <Name>DigitalPlatform.MarcQuery</Name>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>

@@ -10,16 +10,11 @@ using System.Drawing;
 
 using libzkfpcsharp;
 
-using DigitalPlatform.LibraryClient;
-using DigitalPlatform.ResultSet;
-using DigitalPlatform.LibraryClient.localhost;
-using DigitalPlatform.IO;
+using DigitalPlatform;
 using DigitalPlatform.Text;
 using DigitalPlatform.Interfaces;
-using DigitalPlatform;
-using DigitalPlatform.Xml;
-using static DigitalPlatform.CirculationClient.BioUtil;
 using DigitalPlatform.CirculationClient;
+using DigitalPlatform.LibraryClient;
 
 namespace FingerprintCenter
 {
@@ -90,14 +85,17 @@ namespace FingerprintCenter
                     return result;
                 return OpenZK(dev_index);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 if (ex.Source == "libzkfpcsharp"
                     && ex.Message.IndexOf("libzkfp.dll") != -1)
                 {
-                    return new NormalResult { Value = -1,
+                    return new NormalResult
+                    {
+                        Value = -1,
                         ErrorCode = "driver not install",
-                        ErrorInfo = "尚未安装'中控'指纹仪厂家驱动程序" };
+                        ErrorInfo = "尚未安装'中控'指纹仪厂家驱动程序"
+                    };
                 }
                 return new NormalResult { Value = -1, ErrorInfo = ex.Message };
             }
@@ -159,9 +157,12 @@ namespace FingerprintCenter
                 if (ret == -1)
                     message = "尚未连接指纹阅读器";
 
-                return new NormalResult { Value = -1,
+                return new NormalResult
+                {
+                    Value = -1,
                     ErrorCode = "fingerprint:" + ret.ToString(),
-                    ErrorInfo = message };
+                    ErrorInfo = message
+                };
             }
         }
 
@@ -203,6 +204,8 @@ namespace FingerprintCenter
 #endif
 
             return new NormalResult();
+
+
 #if NO
             bnInit.Enabled = false;
             bnFree.Enabled = true;
@@ -502,7 +505,7 @@ namespace FingerprintCenter
         class CaptureData
         {
             // StartCapture() 所使用的 token。记忆下来使用
-            public CancellationToken _cancelToken = new CancellationToken();
+            //  public CancellationToken _cancelToken = new CancellationToken();
             public byte[] CapTmp = new byte[2048];
             public int cbCapTmp = 2048;
             // public byte[] FPBuffer;
@@ -531,6 +534,8 @@ namespace FingerprintCenter
 
         public override void StartCapture(CancellationToken token)
         {
+            LibraryChannelManager.Log?.Debug($"StartCapture()");
+
             _captureData.mfpWidth = GetIntParameter(PARAMETER_PICTURE_WIDTH);
             _captureData.mfpHeight = GetIntParameter(PARAMETER_PICTURE_HEIGHT);
 
@@ -539,32 +544,48 @@ namespace FingerprintCenter
             _register_template_list.Clear();
             _exclude.Clear();
 
-            Thread captureThread = new Thread(new ThreadStart(CaptureThreadMain));
+            Thread captureThread = new Thread(new ParameterizedThreadStart(CaptureThreadMain));
             // captureThread.IsBackground = true;
-            captureThread.Start();
-            _captureData._cancelToken = token;
+            captureThread.Start(token);
+            // _captureData._cancelToken = token;
         }
 
-        void CaptureThreadMain()
+        void CaptureThreadMain(object obj)
         {
-            while (!_captureData._cancelToken.IsCancellationRequested)
-            {
-                byte[] image_buffer = new byte[_captureData.mfpWidth * _captureData.mfpHeight];
+            CancellationToken token = (CancellationToken)obj;
 
-                byte[] template_buffer = new byte[2048];
-                int template_buffer_length = 2048;
-                int ret = zkfp2.AcquireFingerprint(_devHandle,
-                    image_buffer,
-                    template_buffer,
-                    ref template_buffer_length);
-                if (ret == zkfp.ZKFP_ERR_OK)
+            LibraryChannelManager.Log?.Debug($"Begin CaptureThreadMain()");
+            try
+            {
+                // while (!_captureData._cancelToken.IsCancellationRequested)
+                while (!token.IsCancellationRequested)
                 {
-                    // SendMessage(FormHandle, MESSAGE_CAPTURED_OK, IntPtr.Zero, IntPtr.Zero);
-                    ProcessCaptureData(image_buffer,
+                    byte[] image_buffer = new byte[_captureData.mfpWidth * _captureData.mfpHeight];
+
+                    byte[] template_buffer = new byte[2048];
+                    int template_buffer_length = 2048;
+                    int ret = zkfp2.AcquireFingerprint(_devHandle,
+                        image_buffer,
                         template_buffer,
-                        template_buffer_length);
+                        ref template_buffer_length);
+                    if (ret == zkfp.ZKFP_ERR_OK)
+                    {
+                        // SendMessage(FormHandle, MESSAGE_CAPTURED_OK, IntPtr.Zero, IntPtr.Zero);
+                        ProcessCaptureData(image_buffer,
+                            template_buffer,
+                            template_buffer_length);
+                    }
+                    Task.Delay(200, token).Wait(token);
+                    // Thread.Sleep(200);
                 }
-                Thread.Sleep(200);
+            }
+            catch (Exception ex)
+            {
+                LibraryChannelManager.Log?.Error($"*** CaptureThreadMain() Exception: {ExceptionUtil.GetExceptionText(ex)}");
+            }
+            finally
+            {
+                LibraryChannelManager.Log?.Debug($"End CaptureThreadMain()");
             }
         }
 
@@ -580,6 +601,7 @@ namespace FingerprintCenter
             {
                 Task.Run(() =>
                 {
+                    // TODO: 注意检查这里是否会出现内存泄漏
                     MemoryStream ms = new MemoryStream();
                     BitmapFormat.GetBitmap(image_buffer,
                         _captureData.mfpWidth,
@@ -683,11 +705,11 @@ namespace FingerprintCenter
             }
         }
 
-
-
         // exception:
         //      可能会抛出异常。在 token 中断时
-        public override TextResult GetRegisterString(string strExcludeBarcodes)
+        public override TextResult GetRegisterString(
+            Image image,
+            string strExcludeBarcodes)
         {
             string save_mode = _mode;
             try
@@ -716,8 +738,12 @@ namespace FingerprintCenter
                 // 尝试加入高速缓存
                 {
                     string temp_id = Guid.NewGuid().ToString();
-                    nRet = AddItems(new List<FingerprintItem> { new FingerprintItem { ReaderBarcode = temp_id,
-                FingerprintString = zkfp2.BlobToBase64(buffer, length)} },
+                    nRet = AddItems(new List<FingerprintItem> {
+                        new FingerprintItem {
+                            ReaderBarcode = temp_id,
+                            FingerprintString = zkfp2.BlobToBase64(buffer, length)
+                        }
+                        },
                         out string strError);
                     if (nRet == -1)
                         return new TextResult { Value = -1, ErrorInfo = "尝试加入高速缓存时失败" };
@@ -1165,7 +1191,4 @@ out string strError)
 
 #endif
     }
-
-
-
 }

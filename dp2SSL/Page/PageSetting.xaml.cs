@@ -3,16 +3,13 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+
+using DigitalPlatform;
+using DigitalPlatform.Text;
 
 namespace dp2SSL
 {
@@ -76,7 +73,7 @@ namespace dp2SSL
         }
 #endif
 
-#region 属性
+        #region 属性
 
 #if NO
         private void Entities_PropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -140,13 +137,54 @@ namespace dp2SSL
             }
         }
 
-#endregion
+        #endregion
 
 
         private void Config_Click(object sender, RoutedEventArgs e)
         {
-            Window cfg_window = new ConfigWindow();
-            cfg_window.ShowDialog();
+            //FingerprintManager.Base.State = "pause";
+            try
+            {
+                Window cfg_window = new ConfigWindow();
+                cfg_window.ShowDialog();
+            }
+            finally
+            {
+                //FingerprintManager.Base.State = "";
+            }
+
+            // 迫使 URL 生效
+            RfidManager.Url = App.RfidUrl;
+            RfidManager.Clear();
+            FingerprintManager.Url = App.FingerprintUrl;
+            FingerprintManager.Clear();
+            FaceManager.Url = App.FaceUrl;
+            FaceManager.Clear();
+
+            // 检查状态，及时报错
+            {
+                List<string> errors = new List<string>();
+                {
+                    var result = RfidManager.GetState("");
+                    if (result.Value == -1)
+                        errors.Add(result.ErrorInfo);
+                }
+
+                {
+                    var result = FingerprintManager.GetState("");
+                    if (result.Value == -1)
+                        errors.Add(result.ErrorInfo);
+                }
+
+                {
+                    var result = FaceManager.GetState("");
+                    if (result.Value == -1)
+                        errors.Add(result.ErrorInfo);
+                }
+
+                if (errors.Count > 0)
+                    MessageBox.Show(StringUtil.MakePathList(errors, "\r\n"));
+            }
         }
 
         private void ExitButton_Click(object sender, RoutedEventArgs e)
@@ -186,6 +224,42 @@ namespace dp2SSL
 
             this.HasLoggedin = true;
             InitialPage();
+        }
+
+        private void OpenProgramFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(Environment.CurrentDirectory);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ExceptionUtil.GetAutoText(ex));
+            }
+        }
+
+        private void OpenUserFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(WpfClientInfo.UserDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ExceptionUtil.GetAutoText(ex));
+            }
+        }
+
+        private void OpenDataFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(WpfClientInfo.DataDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ExceptionUtil.GetAutoText(ex));
+            }
         }
     }
 }

@@ -37,6 +37,9 @@ namespace dp2Circulation
         // parameters:
         //      end 应还书时间。GMT 时间
         //      now 当前时间。GMT 时间
+        // return:
+        //      1   超期
+        //      0   没有超期
         public static int IsOver(string strUnit,
             DateTime end,
             DateTime now,
@@ -53,6 +56,10 @@ namespace dp2Circulation
         }
 
         // 看现在是否已经超期
+        // return:
+        //      -1  检测过程出错(是否超期则未知)
+        //      1   超期
+        //      0   没有超期
         public static int IsOverdue(string strBorrowDate,
             string strPeriod,
             out string strError)
@@ -69,13 +76,10 @@ namespace dp2Circulation
             if (nRet == -1)
                 return -1;
 
-            string strPeriodUnit = "";
-            long lPeriodValue = 0;
-
             nRet = DateTimeUtil.ParsePeriodUnit(strPeriod,
                 "day",
-                out lPeriodValue,
-                out strPeriodUnit,
+                out long lPeriodValue,
+                out string strPeriodUnit,
                 out strError);
             if (nRet == -1)
             {
@@ -2503,18 +2507,20 @@ namespace dp2Circulation
         /// <param name="list">ListViewControl1 对象</param>
         /// <param name="strID">左边第一列内容</param>
         /// <param name="others">其余列内容</param>
+        /// <param name="insert_pos">插入位置</param>
         /// <returns>新创建的 ListViewItem 对象</returns>
         public static ListViewItem InsertNewLine(
             ListViewControl1 list,
             string strID,
-            string[] others)
+            string[] others,
+            int insert_pos = 0)
         {
             if (others != null)
                 ListViewUtil.EnsureColumns(list, others.Length + 1);
 
             ListViewItem item = new ListViewItem(strID, 0);
 
-            list.Items.Insert(0, item);
+            list.Items.Insert(insert_pos, item);
 
             if (others != null)
             {
@@ -2524,8 +2530,7 @@ namespace dp2Circulation
                 }
             }
 
-            list.UpdateItem(0);
-
+            list.UpdateItem(insert_pos);
             return item;
         }
 
@@ -2570,18 +2575,20 @@ namespace dp2Circulation
         /// <param name="list">ListView 对象</param>
         /// <param name="strID">左边第一列内容</param>
         /// <param name="others">其余列内容</param>
+        /// <param name="insert_pos"></param>
         /// <returns>新创建的 ListViewItem 对象</returns>
         public static ListViewItem InsertNewLine(
             ListView list,
             string strID,
-            string[] others)
+            string[] others,
+            int insert_pos = 0)
         {
             if (others != null)
                 ListViewUtil.EnsureColumns(list, others.Length + 1);
 
             ListViewItem item = new ListViewItem(strID, 0);
 
-            list.Items.Insert(0, item);
+            list.Items.Insert(insert_pos, item);
 
             if (others != null)
             {

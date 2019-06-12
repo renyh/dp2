@@ -8,7 +8,7 @@ namespace DigitalPlatform.RFID
 {
     public interface IRfidDriver
     {
-        InitializeDriverResult InitializeDriver(string style);
+        InitializeDriverResult InitializeDriver(string style, List<HintInfo> hint_table);
 
         NormalResult ReleaseDriver();
 
@@ -287,7 +287,11 @@ uint new_password);
 
     public class InitializeDriverResult : NormalResult
     {
+        // [out]
         public List<Reader> Readers { get; set; }
+
+        // [out]
+        public List<HintInfo> HintTable { get; set; }
 
         public InitializeDriverResult(NormalResult result) : base (result)
         {
@@ -300,6 +304,13 @@ uint new_password);
         }
     }
 
+    // COM 口暗示信息事项
+    public class HintInfo
+    {
+        public string COM { get; set; }
+        public string BaudRate { get; set; }
+    }
+
     // [Serializable()]
     public class Reader
     {
@@ -307,6 +318,7 @@ uint new_password);
         public string Type { get; set; }    // 类型 USB/COM
         public string DriverName { get; set; }  // RL8000 M201 等等
         public string ProductName { get; set; } // 产品型号
+        public string Protocols { get; set; }   // 支持的协议。ISO15693,ISO14443A 等
         public string SerialNumber { get; set; }    // 序列号(USB)，或者 COM 端口号
         public string DriverPath { get; set; }
         public UIntPtr ReaderHandle { get; set; }

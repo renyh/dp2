@@ -16,6 +16,7 @@ using DigitalPlatform.IO;
 using DigitalPlatform.Text;
 
 using DigitalPlatform.LibraryClient.localhost;
+using System.Threading.Tasks;
 
 namespace dp2Circulation
 {
@@ -220,31 +221,27 @@ out strError);
         void Initial()
         {
             string strError = "";
+
+            List<string> errors = new List<string>();
             int nRet = ListAllDatabases(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             nRet = ListAllOpacDatabases(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
+
 
             nRet = this.ListAllOpacBrowseFormats(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
+
 
             // 列出所有日历
             // 需要在 NewListRightsTables() 以前调用
             nRet = this.ListCalendars(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
 #if NO
                         nRet = this.ListRightsTables(out strError);
@@ -256,23 +253,17 @@ out strError);
 
             nRet = this.NewListRightsTables(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             // 在listview中列出所有馆藏地
             nRet = this.ListAllLocations(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             // 列出种次号定义
             nRet = this.ListZhongcihao(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             treeView_zhongcihao_AfterSelect(this, null);
 
@@ -280,9 +271,7 @@ out strError);
             // 列出排架体系定义
             nRet = this.ListArrangement(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             treeView_arrangement_AfterSelect(this, null);
 
@@ -290,31 +279,31 @@ out strError);
             // 列出脚本
             nRet = this.ListScript(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
+
+            // 列出条码校验规则
+            nRet = this.ListBarcodeValidation(out strError);
+            if (nRet == -1)
+                errors.Add(strError);
 
             nRet = this.ListDup(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             // 列出值列表
             nRet = this.ListValueTables(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             // 列出中心服务器
             nRet = this.ListCenter(out strError);
             if (nRet == -1)
-            {
-                MessageBox.Show(this, strError);
-            }
+                errors.Add(strError);
 
             ActivateHelpUrl();
+
+            if (errors.Count > 0)
+                MessageDlg.Show(this, StringUtil.MakePathList(errors, "\r\n"), "ManagerForm");
         }
 
 #if NO
@@ -6164,6 +6153,204 @@ out strError);
 
         #endregion
 
+        #region 条码校验
+
+        int ListBarcodeValidation(out string strError)
+        {
+            strError = "";
+
+            if (this.BarcodeValidationChanged == true)
+            {
+                // 警告尚未保存
+                DialogResult result = MessageBox.Show(this,
+                    "当前窗口内条码校验规则定义被修改后尚未保存。若此时刷新窗口内容，现有未保存信息将丢失。\r\n\r\n确实要刷新? ",
+                    "ManagerForm",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+                if (result != DialogResult.Yes)
+                {
+                    return 0;
+                }
+            }
+
+            // 获得定义
+            int nRet = GetBarcodeValidationInfo(out string strScriptXml,
+                out strError);
+            if (nRet == -1)
+                return -1;
+
+            nRet = AddRoot(strScriptXml,
+    "barcodeValidation",
+    out string strXml,
+    out strError);
+            if (nRet == -1)
+                return -1;
+
+#if NO
+            if (string.IsNullOrEmpty(strScriptXml) == false)
+            {
+                strScriptXml = "<barcodeValidation>" + strScriptXml + "</barcodeValidation>";
+
+                nRet = DomUtil.GetIndentXml(strScriptXml,
+                    out strXml,
+                    out strError);
+                if (nRet == -1)
+                    return -1;
+
+                // 为了显示元素中的脚本的回行
+                strXml = strXml.Replace("\r\n", "\n");
+                strXml = strXml.Replace("\n", "\r\n");
+            }
+#endif
+
+            this.textBox_barcodeValidation.Text = strXml;
+            this.BarcodeValidationChanged = false;
+
+            if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "3.12") < 0)
+                this.textBox_barcodeValidation.ReadOnly = true;
+            return 1;
+        }
+
+        public static int AddRoot(string strScriptXml,
+            string strRootElementName,
+            out string strXml,
+            out string strError)
+        {
+            strXml = "";
+            strError = "";
+
+            if (string.IsNullOrEmpty(strScriptXml) == false)
+            {
+                strScriptXml = $"<{strRootElementName}>{strScriptXml}</{strRootElementName}>";
+
+                int nRet = DomUtil.GetIndentXml(strScriptXml,
+                    out strXml,
+                    out strError);
+                if (nRet == -1)
+                    return -1;
+
+                // 为了显示元素中的脚本的回行
+                strXml = strXml.Replace("\r\n", "\n");
+                strXml = strXml.Replace("\n", "\r\n");
+            }
+            return 0;
+        }
+
+        // 获得条码校验规则定义
+        int GetBarcodeValidationInfo(out string strXml,
+            out string strError)
+        {
+            strError = "";
+            strXml = "";
+
+            EnableControls(false);
+
+            stop.OnStop += new StopEventHandler(this.DoStop);
+            stop.Initial("正在获取条码校验规则定义 ...");
+            stop.BeginLoop();
+
+            this.Update();
+            Program.MainForm.Update();
+
+            try
+            {
+                long lRet = Channel.GetSystemParameter(
+                    stop,
+                    "circulation",
+                    "barcodeValidation",
+                    out strXml,
+                    out strError);
+                if (lRet == -1)
+                    goto ERROR1;
+                return (int)lRet;
+            }
+            finally
+            {
+                stop.EndLoop();
+                stop.OnStop -= new StopEventHandler(this.DoStop);
+                stop.Initial("");
+
+                EnableControls(true);
+            }
+
+            ERROR1:
+            return -1;
+        }
+
+        // 保存条码校验规则定义
+        // parameters:
+        //      strScriptXml   脚本定义XML。注意，没有根元素
+        int SetBarcodeValidationDef(string strXml,
+            out string strError)
+        {
+            strError = "";
+
+            //
+            if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "3.12") < 0)
+            {
+                strError = $"当前连接的 dp2library 服务器版本太旧({Program.MainForm.ServerVersion})，无法使用 BarcodeValidation 定义。需要升级到 3.12 版以上才能使用";
+                return -1;
+            }
+
+            EnableControls(false);
+
+            stop.OnStop += new StopEventHandler(this.DoStop);
+            stop.Initial("正在保存条码校验规则定义 ...");
+            stop.BeginLoop();
+
+            this.Update();
+            Program.MainForm.Update();
+
+            try
+            {
+                long lRet = Channel.SetSystemParameter(
+                    stop,
+                    "circulation",
+                    "barcodeValidation",
+                    strXml,
+                    out strError);
+                if (lRet == -1)
+                    goto ERROR1;
+
+                return (int)lRet;
+            }
+            finally
+            {
+                stop.EndLoop();
+                stop.OnStop -= new StopEventHandler(this.DoStop);
+                stop.Initial("");
+
+                EnableControls(true);
+            }
+
+            ERROR1:
+            return -1;
+        }
+
+        bool m_bBarcodeValidationChanged = false;
+
+        /// <summary>
+        /// 条码校验规则定义是否被修改
+        /// </summary>
+        public bool BarcodeValidationChanged
+        {
+            get
+            {
+                return this.m_bBarcodeValidationChanged;
+            }
+            set
+            {
+                this.m_bBarcodeValidationChanged = value;
+                if (value == true)
+                    this.toolStripButton_barcodeValidation_save.Enabled = true;
+                else
+                    this.toolStripButton_barcodeValidation_save.Enabled = false;
+            }
+        }
+
+        #endregion
+
         #region 脚本
 
         int ListScript(out string strError)
@@ -6193,6 +6380,13 @@ out strError);
             if (nRet == -1)
                 return -1;
 
+            nRet = AddRoot(strScriptXml,
+"script",
+out string strXml,
+out strError);
+            if (nRet == -1)
+                return -1;
+#if NO
             strScriptXml = "<script>" + strScriptXml + "</script>";
 
             string strXml = "";
@@ -6205,10 +6399,10 @@ out strError);
             // 为了显示<script>元素中的脚本的回行
             strXml = strXml.Replace("\r\n", "\n");
             strXml = strXml.Replace("\n", "\r\n");
+#endif
 
             this.textBox_script.Text = strXml;
             this.ScriptChanged = false;
-
             return 1;
         }
 
@@ -7022,7 +7216,6 @@ out strError);
             {
                 this.ZhongcihaoChanged = false;
             }
-
         }
 
         // 修改一个节点的定义
@@ -7507,7 +7700,6 @@ out strError);
             {
                 this.ArrangementChanged = false;
             }
-
         }
 
         private void toolStripButton_arrangement_refresh_Click(object sender, EventArgs e)
@@ -9150,7 +9342,79 @@ out strError);
             }
         }
 
+        private void toolStripButton_barcodeValidation_refresh_Click(object sender, EventArgs e)
+        {
+            this.toolStripButton_barcodeValidation_refresh.Enabled = false;
+            try
+            {
+                int nRet = this.ListBarcodeValidation(out string strError);
+                if (nRet == -1)
+                {
+                    MessageBox.Show(this, strError);
+                }
+            }
+            finally
+            {
+                this.toolStripButton_barcodeValidation_refresh.Enabled = true;
+            }
+        }
 
+        private void toolStripButton_barcodeValidation_save_Click(object sender, EventArgs e)
+        {
+            string strError = "";
+            string strScriptXml = this.textBox_barcodeValidation.Text;
+
+            if (String.IsNullOrEmpty(strScriptXml) == true)
+            {
+                strScriptXml = "";
+            }
+            else
+            {
+
+                XmlDocument dom = new XmlDocument();
+                try
+                {
+                    dom.LoadXml(strScriptXml);
+                }
+                catch (Exception ex)
+                {
+                    strError = "XML字符串装入XMLDOM时发生错误: " + ex.Message;
+                    goto ERROR1;
+                }
+
+                if (dom.DocumentElement == null)
+                {
+                    strScriptXml = "";
+                }
+                else
+                    strScriptXml = dom.DocumentElement.InnerXml;
+            }
+
+            int nRet = SetBarcodeValidationDef(strScriptXml,
+                out strError);
+            if (nRet == -1)
+            {
+                //this.textBox_script_comment.Text = strError;
+                //this.ScriptChanged = false;
+                goto ERROR1;
+            }
+
+            this.BarcodeValidationChanged = false;
+
+            // 重新装载
+            Task.Run(() =>
+            {
+                Program.MainForm.GetBarcodeValidationInfo();
+            });
+            return;
+            ERROR1:
+            MessageBox.Show(this, strError);
+        }
+
+        private void textBox_barcodeValidation_TextChanged(object sender, EventArgs e)
+        {
+            this.BarcodeValidationChanged = true;
+        }
     }
 
     #endregion // 查重

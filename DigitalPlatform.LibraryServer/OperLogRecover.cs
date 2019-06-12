@@ -164,7 +164,6 @@ namespace DigitalPlatform.LibraryServer
             this.App.AddHangup("LogRecover");
             try
             {
-                string strError = "";
 
                 BatchTaskStartInfo startinfo = this.StartInfo;
                 if (startinfo == null)
@@ -175,7 +174,7 @@ namespace DigitalPlatform.LibraryServer
                 int nRet = ParseLogRecoverStart(startinfo.Start,
                     out lStartIndex,
                     out strStartFileName,
-                    out strError);
+                    out string strError);
                 if (nRet == -1)
                 {
                     this.AppendErrorText("启动失败: " + strError + "\r\n");
@@ -183,16 +182,11 @@ namespace DigitalPlatform.LibraryServer
                 }
 
                 //
-                string strRecoverLevel = "";
-                bool bClearFirst = false;
-                bool bContinueWhenError = false;
-                string strStyle = "";
-
                 nRet = ParseLogRecoverParam(startinfo.Param,
-                    out strRecoverLevel,
-                    out bClearFirst,
-                    out bContinueWhenError,
-                    out strStyle,
+                    out string strRecoverLevel,
+                    out bool bClearFirst,
+                    out bool bContinueWhenError,
+                    out string strStyle,
                     out strError);
                 if (nRet == -1)
                 {
@@ -213,7 +207,9 @@ namespace DigitalPlatform.LibraryServer
                     return;
                 }
 
-                this.App.WriteErrorLog("日志恢复 任务启动。");
+                this.App.WriteErrorLog($"日志恢复 任务启动。恢复级别为: {this.RecoverLevel}");
+
+                this.AppendResultText($"日志恢复级别为: {this.RecoverLevel}\r\n");
 
                 // 当为容错恢复级别时，检查当前全部读者库的检索点是否符合要求
                 if (this.RecoverLevel == LibraryServer.RecoverLevel.Robust)
@@ -241,6 +237,8 @@ namespace DigitalPlatform.LibraryServer
 
                 if (bClearFirst == true)
                 {
+                    this.AppendResultText("清除全部数据库记录\r\n");
+
                     nRet = this.App.ClearAllDbs(this.RmsChannels,
                         out strError);
                     if (nRet == -1)
@@ -256,7 +254,6 @@ namespace DigitalPlatform.LibraryServer
                     // 做所有文件
                     bStart = true;
                 }
-
 
                 // 列出所有日志文件
                 DirectoryInfo di = new DirectoryInfo(this.App.OperLog.Directory);
@@ -298,7 +295,6 @@ namespace DigitalPlatform.LibraryServer
                             goto ERROR1;
                         lStartIndex = 0;    // 第一个文件以后的文件就全做了
                     }
-
                 }
 
                 this.AppendResultText("循环结束\r\n");
@@ -309,7 +305,11 @@ namespace DigitalPlatform.LibraryServer
                 // TODO: 可以考虑从 result 文本文件中搜集所有错误信息行，放入 ErrorInfo 中，不过得有个极限行数限制
                 return;
 
-            ERROR1:
+                ERROR1:
+                // 2019/4/25
+                this.AppendResultText($"{strError}\r\n");
+                this.App.WriteErrorLog($"*** 日志恢复任务出错: {strError}");
+
                 this.ErrorInfo = strError;
                 return;
             }
@@ -386,7 +386,7 @@ namespace DigitalPlatform.LibraryServer
                     {
                         // Debug.Assert(!(lIndex == 182 && strFileName == "20071225.log"), "");
 
-                        long lAttachmentLength = 0;
+                        // long lAttachmentLength = 0;
                         // 获得一个日志记录
                         // parameters:
                         //      strFileName 纯文件名,不含路径部分

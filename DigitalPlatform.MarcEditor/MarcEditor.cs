@@ -21,7 +21,7 @@ namespace DigitalPlatform.Marc
     /// <summary>
     /// MARC 编辑器控件
     /// </summary>
-    [Designer("System.Windows.Forms.Design.ParentControlDesigner, System.Design", typeof(IDesigner))]
+    // [Designer("System.Windows.Forms.Design.ParentControlDesigner, System.Design", typeof(IDesigner))]
     public class MarcEditor : System.Windows.Forms.Control//,IGetValueList //UserControl
     {
         internal const int WM_LEFTRIGHT_MOVED = API.WM_USER + 201;
@@ -593,28 +593,12 @@ namespace DigitalPlatform.Marc
         /// </summary>
         public MarcEditor()
         {
+            this.record = new Record(this);
+
             this.DoubleBuffered = true;
 
             // 该调用是 Windows.Forms 窗体设计器所必需的。
             InitializeComponent();
-
-            /*
-            // 2008/11/26
-            this.SetStyle(ControlStyles.Selectable, true);
-             * */
-
-            /*
-            // 2006/11/13
-            // 初始化内部等宽字体
-            if (this.m_captionFont == null)
-            {
-                this.m_captionFont = this.Font;
-            }
-            if (this.m_fixedSizeFont == null)
-            {
-                this.m_fixedSizeFont = this.Font;
-            }
-             * */
         }
 
         //
@@ -635,7 +619,8 @@ namespace DigitalPlatform.Marc
                 if (components != null)
                     components.Dispose();
             }
-            FreeFonts();
+            if (this.DesignMode == false)
+                FreeFonts();
             base.Dispose(disposing);
         }
         #endregion
@@ -647,6 +632,9 @@ namespace DigitalPlatform.Marc
         /// </summary>
         private void InitializeComponent()
         {
+            if (this.DesignMode)
+                return;
+
             this.SuspendLayout();
             // 
             // MarcEditor
@@ -654,7 +642,6 @@ namespace DigitalPlatform.Marc
             // this.Enter += new System.EventHandler(this.MarcEditor_Enter);
             this.EnabledChanged += new System.EventHandler(this.MarcEditor_EnabledChanged);
             this.ResumeLayout(false);
-
         }
         #endregion
 
@@ -722,11 +709,18 @@ namespace DigitalPlatform.Marc
             }
             set
             {
+#if SAFE
+                if (this.DesignMode)
+                {
+                    base.Font = value;
+                    return;
+                }
+#endif
                 if (value == null)
                 {
                     this.m_fixedSizeFont = value;
                     this.m_captionFont = value;
-                    this.Font = value;
+                    base.Font = value;  // 2019/5/18 从 this.Font 改过来
                     return;
                 }
 
@@ -743,7 +737,10 @@ namespace DigitalPlatform.Marc
                 if (this.m_captionFont == null)
                     this.m_captionFont = value;
                 else
+                {
+                    // TODO: 测试一下是否会导致内存泄漏
                     this.m_captionFont = new Font(this.m_captionFont.FontFamily, value.SizeInPoints, GraphicsUnit.Point);
+                }
 
                 // 最后触发
                 base.Font = value;
@@ -757,6 +754,12 @@ namespace DigitalPlatform.Marc
         {
             get
             {
+#if SAFE
+                if (this.DesignMode)
+                    return this.Font;
+#endif
+
+
                 if (this.m_fixedSizeFont == null)
                 {
                     this.m_fixedSizeFont = new Font(new FontFamily("Courier New"),
@@ -768,6 +771,11 @@ namespace DigitalPlatform.Marc
             }
             set
             {
+#if SAFE
+                if (this.DesignMode)
+                    return;
+#endif
+
                 if (this.m_fixedSizeFont != null)
                     this.m_fixedSizeFont.Dispose();
 
@@ -795,10 +803,14 @@ namespace DigitalPlatform.Marc
         {
             get
             {
+#if SAFE
+                if (this.DesignMode)
+                    return this.Font;
+#endif
                 if (this.m_captionFont == null)
                 {
                     if (this.Font != null)
-                        this.m_captionFont = this.Font;
+                        this.m_captionFont = NewFont(this.Font); // this.Font;
                     else
                         this.m_fixedSizeFont = new Font(new FontFamily("宋体"),
                             9,
@@ -808,11 +820,23 @@ namespace DigitalPlatform.Marc
             }
             set
             {
+#if SAFE
+                if (this.DesignMode)
+                    return;
+#endif
                 if (this.m_captionFont != null)
                     this.m_captionFont.Dispose();
 
                 this.m_captionFont = value;
             }
+        }
+
+        static Font NewFont(Font ref_font)
+        {
+            return new Font(ref_font.FontFamily,
+    ref_font.SizeInPoints,
+    ref_font.Style,
+    GraphicsUnit.Point);
         }
 
 #if NO
@@ -838,6 +862,9 @@ namespace DigitalPlatform.Marc
         {
             get
             {
+                if (this.DesignMode)
+                    return base.CreateParams;
+
                 CreateParams param = base.CreateParams;
 
                 if (this.m_borderStyle == BorderStyle.FixedSingle)
@@ -866,6 +893,9 @@ namespace DigitalPlatform.Marc
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 this.m_borderStyle = value;
 
                 // Get Styles using Win32 calls
@@ -920,6 +950,12 @@ namespace DigitalPlatform.Marc
         /// <param name="m">消息</param>
         protected override void DefWndProc(ref Message m)
         {
+            if (this.DesignMode)
+            {
+                base.DefWndProc(ref m);
+                return;
+            }
+
             switch (m.Msg)
             {
                 case WM_LEFTRIGHT_MOVED:
@@ -1029,7 +1065,6 @@ namespace DigitalPlatform.Marc
             if (member == ScrollBarMember.Horz
                 || member == ScrollBarMember.Both)
             {
-
                 // 水平方向
                 API.ScrollInfoStruct si = new API.ScrollInfoStruct();
 
@@ -1041,7 +1076,6 @@ namespace DigitalPlatform.Marc
                 si.nPos = -this.DocumentOrgX;
                 API.SetScrollInfo(this.Handle, API.SB_HORZ, ref si, true);
             }
-
 
             if (member == ScrollBarMember.Vert
                 || member == ScrollBarMember.Both)
@@ -1559,6 +1593,12 @@ namespace DigitalPlatform.Marc
         /// <param name="e">包含事件数据的 System.EventArgs。</param>
         protected override void OnHandleCreated(EventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnHandleCreated(e);
+                return;
+            }
+
             base.OnHandleCreated(e);
 
             /*
@@ -1578,8 +1618,16 @@ namespace DigitalPlatform.Marc
 				this.DefaultValueBackColor = ColorUtil.String2Color(this.m_strDefaultValueBaceColor);
              */
 
-            this.record = new Record(this);
+            // this.record = new Record(this);
         }
+
+#if NO
+        void EnsureCreateRecord()
+        {
+            if (this.record == null)
+                this.record = new Record(this);
+        }
+#endif
 
         //
         // 摘要:
@@ -1594,6 +1642,12 @@ namespace DigitalPlatform.Marc
         /// <param name="e">包含事件数据的 System.EventArgs。</param>
         protected override void OnSizeChanged(System.EventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnSizeChanged(e);
+                return;
+            }
+
             base.OnSizeChanged(e);
 
             if (this.record != null)
@@ -1622,6 +1676,16 @@ namespace DigitalPlatform.Marc
         /// <param name="pe">包含事件数据的 System.Windows.Forms.PaintEventArgs。</param>
         protected override void OnPaint(PaintEventArgs pe)
         {
+            if (this.DesignMode && this.record == null)
+            {
+                // TODO: 可以显示警告文字
+                using (Brush brush = new SolidBrush(Color.Red))
+                {
+                    pe.Graphics.FillRectangle(brush, new Rectangle(0, 0, 1000, 1000));
+                }
+                return;
+            }
+
             /*
             pe.Graphics.SmoothingMode =
 System.Drawing.Drawing2D.SmoothingMode.HighQuality;
@@ -1638,7 +1702,7 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 this.m_captionFont = this.CreateCaptionFont();
             */
 
-            this.record.Paint(pe, x, y);
+            this.record?.Paint(pe, x, y);
         }
 
         /// <summary>
@@ -1666,6 +1730,11 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <param name="e">包含事件数据的 System.Windows.Forms.MouseEventArgs。</param>
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnMouseDown(e);
+                return;
+            }
 
             //this.WriteErrorInfo("走到OnMouseDown里");
             this.Capture = true;
@@ -1844,6 +1913,12 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <param name="e">包含事件数据的 System.Windows.Forms.MouseEventArgs。</param>
         protected override void OnMouseMove(MouseEventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnMouseMove(e);
+                return;
+            }
+
             if (nDragCol != -1)
             {
                 Cursor = Cursors.SizeWE;
@@ -1918,6 +1993,12 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <param name="e">包含事件数据的 System.Windows.Forms.MouseEventArgs。</param>
         protected override void OnMouseUp(MouseEventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnMouseUp(e);
+                return;
+            }
+
             this.Capture = false;
 
             if (nDragCol != -1)
@@ -1979,17 +2060,26 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <summary>
         ///字段名区域宽度
         /// </summary>
+        [Category("Appearance")]
+        [DescriptionAttribute("Field Name Caption Area Width")]
+        [DefaultValue(typeof(int), "100")]
         public int FieldNameCaptionWidth
         {
             get
             {
+                if (this.DesignMode)
+                    return 100;
+
                 if (this.record == null)
-                    return 0;
+                    return 100;
 
                 return this.record.NameCaptionPureWidth;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 if (this.record == null)
                     return;
 
@@ -2543,6 +2633,12 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         protected override void OnFontChanged(
             EventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnFontChanged(e);
+                return;
+            }
+
             /*
             // 防止残留的字体影响
             this.m_fixedSizeFont = null;
@@ -2573,6 +2669,12 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <param name="e">包含事件数据的 System.Windows.Forms.KeyEventArgs。</param>
         protected override void OnKeyDown(KeyEventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnKeyDown(e);
+                return;
+            }
+
             base.OnKeyDown(e);
             switch (e.KeyCode)
             {
@@ -2601,6 +2703,12 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// <param name="e">包含事件数据的 System.Windows.Forms.KeyEventArgs。</param>
         protected override void OnKeyUp(KeyEventArgs e)
         {
+            if (this.DesignMode)
+            {
+                base.OnKeyUp(e);
+                return;
+            }
+
             int i = 0;
             i++;
             if (e.Shift == true)
@@ -2627,6 +2735,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         {
             get
             {
+                if (this.DesignMode)
+                    return null;
+
                 if (this.SelectedFieldIndices.Count > 1)
                     return null;    //
 
@@ -2644,6 +2755,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 if (value == null)
                     return;
                 int nIndex = this.record.Fields.IndexOf(value);
@@ -2663,6 +2777,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         {
             get
             {
+                if (this.DesignMode)
+                    return 0;
+
                 if (this.SelectedFieldIndices.Count == 0)
                     return -1;
 
@@ -2679,6 +2796,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
             // 2007/7/17 
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 // 先Flush
                 this.Flush();
 
@@ -2738,6 +2858,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         {
             get
             {
+                if (this.DesignMode)
+                    return (char)0;
+
                 if (this.FocusedField == null)
                     return (char)0;
 
@@ -2802,6 +2925,8 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         {
             get
             {
+                if (this.DesignMode)
+                    return -1;
 #if BIDI_SUPPORT
                 if (this.curEdit != null)
                     return this.curEdit.SelectionStart - CountFillingChar(this.curEdit.Text, this.curEdit.SelectionStart);
@@ -2813,6 +2938,9 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 if (value >= 0 && this.curEdit != null)
                 {
                     if (value < this.curEdit.Text.Length)
@@ -2869,19 +2997,30 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
             }
         }
 
+        // internal const string default_marc = "012345678901234567890123001A0000001";
+        // internal const string default_marc = "?????nam0 22?????3i 45  001A0000001";
+        internal const string default_marc = "?????nam0 22?????3i 45  ";
+
+        // 
         // 设数据xml
         /// <summary>
         /// 当前 MARC 字符串(机内格式)
         /// </summary>
+        [Category("Content")]
+        [DescriptionAttribute("MARC record")]
+        [DefaultValue(typeof(string), default_marc)]
         public string Marc
         {
             get
             {
-                return this.record.GetMarc();
+                if (this.DesignMode && this.record == null)
+                    return default_marc;
+                return this.record?.GetMarc();
             }
             set
             {
-                string strError = "";
+                if (this.DesignMode && this.record == null)
+                    return;
 
                 if (this.curEdit != null)
                 {
@@ -2891,20 +3030,26 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 }
                 // this.HideTextBox();
 
-                int nRet = this.record.SetMarc(value,
-                    true,
-                    out strError);
-                if (nRet == -1)
+                if (this.record != null)
                 {
-                    // MessageBox.Show("SetMarc()出错，原因：" + strError);
-                    throw (new Exception("SetMarc()出错，原因：" + strError));
+                    int nRet = this.record.SetMarc(value,
+                        true,
+                        out string strError);
+                    if (nRet == -1)
+                    {
+                        if (this.DesignMode == true)
+                        {
+                            // 绘制报错文字图象
+                        }
+                        else
+                            throw (new Exception("SetMarc()出错，原因：" + strError));
+                    }
                 }
 
                 // 2014/7/10
                 AdjustOriginY();
             }
         }
-
 
         /// <summary>
         /// 内容是否发生过修改
@@ -2916,12 +3061,18 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         {
             get
             {
-                if (this.SelectedFieldIndices.Count == 1)
+                if (this.DesignMode)
+                    return false;
+
+                if (this.SelectedFieldIndices?.Count == 1)
                     this.EditControlTextToItem();   // 容易引起递归。已经解决
                 return this.m_bChanged;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 this.m_bChanged = value;
             }
         }
@@ -2931,7 +3082,7 @@ System.Drawing.Drawing2D.SmoothingMode.HighQuality;
         /// </summary>
         public void Flush()
         {
-            if (this.SelectedFieldIndices.Count == 1)
+            if (this.SelectedFieldIndices?.Count == 1)
             {
                 this.EditControlTextToItem();
             }
@@ -3172,10 +3323,15 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5697.17821, Culture=neutral, 
         {
             get
             {
+                if (this.DesignMode)
+                    return 0;
                 return this.m_nDocumentOrgX;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 int nDocumentOrgX_old = this.m_nDocumentOrgX;
 
                 // 视图大于文档
@@ -3228,10 +3384,15 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5697.17821, Culture=neutral, 
         {
             get
             {
+                if (this.DesignMode)
+                    return 0;
                 return this.m_nDocumentOrgY;
             }
             set
             {
+                if (this.DesignMode)
+                    return;
+
                 int nDocumentOrgY_old = this.m_nDocumentOrgY;
                 if (this.ClientHeight >= this.DocumentHeight)
                 {
@@ -6252,11 +6413,6 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5697.17821, Culture=neutral, 
             // this.Update();   // 优化
         }
 
-        /*
-        override void OnEnter(EventArgs e)
-        {
-            base.OnEnter(e);
-        }*/
 
 #if NOOOOOOOOOOOOOOOO
         private void MarcEditor_Enter(object sender, EventArgs e)
@@ -6291,6 +6447,9 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5697.17821, Culture=neutral, 
         {
             get
             {
+                if (this.DesignMode)
+                    return base.Focused;
+
                 if (base.Focused == true)
                     return true;
 

@@ -8,7 +8,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>TestDp2Library</RootNamespace>
     <AssemblyName>TestDp2Library</AssemblyName>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{3AC096D0-A1C2-E12C-1390-A8335801FDAB};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>
@@ -61,6 +61,7 @@
   </Choose>
   <ItemGroup>
     <Compile Include="TestAuthorNumber.cs" />
+    <Compile Include="TestBarcodeValidator.cs" />
     <Compile Include="TestBiblioTable.cs" />
     <Compile Include="TestDp2Library.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
@@ -68,13 +69,13 @@
     <Compile Include="TestRfid.cs" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\DigitalPlatform.LibraryServer.Common\DigitalPlatform.LibraryServer.Common.csproj">
+      <Project>{2f085431-027a-4ddf-9b3d-83219e629fa1}</Project>
+      <Name>DigitalPlatform.LibraryServer.Common</Name>
+    </ProjectReference>
     <ProjectReference Include="..\DigitalPlatform.LibraryServer\DigitalPlatform.LibraryServer.csproj">
       <Project>{E153CC55-DA01-4403-A53F-AF801BDDF4BA}</Project>
       <Name>DigitalPlatform.LibraryServer</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\DigitalPlatform.MarcQuery\DigitalPlatform.MarcQuery.csproj">
-      <Project>{57FE2FB1-4134-409B-876C-8A1C0776B498}</Project>
-      <Name>DigitalPlatform.MarcQuery</Name>
     </ProjectReference>
     <ProjectReference Include="..\DigitalPlatform.RFID\DigitalPlatform.RFID.csproj">
       <Project>{9d26d2ad-eabb-4c32-8706-fb9e323faf01}</Project>
@@ -87,6 +88,14 @@
     <ProjectReference Include="..\DigitalPlatform\4.0\DigitalPlatform.csproj">
       <Project>{BDD43275-EAA0-4670-8BA3-0DB5CD7598DD}</Project>
       <Name>DigitalPlatform</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\dp-library\DigitalPlatform.Core\DigitalPlatform.Core.csproj">
+      <Project>{c5b517c1-7344-45a5-89dc-06a9b130ae36}</Project>
+      <Name>DigitalPlatform.Core</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\dp-library\DigitalPlatform.MarcQuery\DigitalPlatform.MarcQuery.csproj">
+      <Project>{623ea980-be0a-46bb-9e3e-dd8d0fe54f6f}</Project>
+      <Name>DigitalPlatform.MarcQuery</Name>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>

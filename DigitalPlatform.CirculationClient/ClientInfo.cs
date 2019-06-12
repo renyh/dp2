@@ -6,6 +6,8 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Collections.Generic;
+using System.Collections;
 
 using log4net;
 
@@ -14,8 +16,7 @@ using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.Text;
 using DigitalPlatform.Core;
-using System.Collections.Generic;
-using System.Collections;
+using System.Drawing;
 
 namespace DigitalPlatform.CirculationClient
 {
@@ -101,6 +102,16 @@ namespace DigitalPlatform.CirculationClient
             string strServerUrl = GetValidPathString(strUrl.Replace("/", "_"));
 
             return Path.Combine(UserDir, "fingerprintcache\\" + strServerUrl);
+        }
+
+        /// <summary>
+        /// 人脸本地缓存目录
+        /// </summary>
+        public static string FaceCacheDir(string strUrl)
+        {
+            string strServerUrl = GetValidPathString(strUrl.Replace("/", "_"));
+
+            return Path.Combine(UserDir, "facecache\\" + strServerUrl);
         }
 
         public static string Lang = "zh";
@@ -433,13 +444,16 @@ namespace DigitalPlatform.CirculationClient
             }
         }
 
-        public static void RemoveShortcutFromStartupGroup(string strProductName)
+        // parameters:
+        //      force 是否强制删除？如果为 false 表示不强制删除。在不是强制删除的情况下，应当满足 ClickOnce 启动并且是安装更新后第一次启动运行本函数才有效
+        public static void RemoveShortcutFromStartupGroup(string strProductName,
+            bool force = false)
         {
-            if (ApplicationDeployment.IsNetworkDeployed &&
+            if (force
+                || (ApplicationDeployment.IsNetworkDeployed &&
     ApplicationDeployment.CurrentDeployment != null &&
-    ApplicationDeployment.CurrentDeployment.IsFirstRun)
+    ApplicationDeployment.CurrentDeployment.IsFirstRun))
             {
-
                 string strTargetPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
                 strTargetPath = Path.Combine(strTargetPath, strProductName) + ".appref-ms";
 
@@ -812,5 +826,168 @@ namespace DigitalPlatform.CirculationClient
         }
 
         #endregion
+
+        #region Form 实用函数
+
+        public delegate void delegate_action(object o);
+
+        public static void ProcessControl(Control control,
+            delegate_action action)
+        {
+            action(control);
+            ProcessChildren(control, action);
+        }
+
+        static void ProcessChildren(Control parent,
+            delegate_action action)
+        {
+            // 修改所有下级控件的字体，如果字体名不一样的话
+            foreach (Control sub in parent.Controls)
+            {
+                action(sub);
+
+                if (sub is ToolStrip)
+                {
+                    ProcessToolStrip((ToolStrip)sub, action);
+                }
+
+                if (sub is SplitContainer)
+                {
+                    ProcessSplitContainer(sub as SplitContainer, action);
+                }
+
+                // 递归
+                ProcessChildren(sub, action);
+            }
+        }
+
+        static void ProcessToolStrip(ToolStrip tool,
+delegate_action action)
+        {
+            List<ToolStripItem> items = new List<ToolStripItem>();
+            foreach (ToolStripItem item in tool.Items)
+            {
+                items.Add(item);
+            }
+
+            foreach (ToolStripItem item in items)
+            {
+                action(item);
+
+                if (item is ToolStripMenuItem)
+                {
+                    ProcessDropDownItemsFont(item as ToolStripMenuItem, action);
+                }
+            }
+        }
+
+        static void ProcessDropDownItemsFont(ToolStripMenuItem menu,
+            delegate_action action)
+        {
+            // 修改所有事项的字体，如果字体名不一样的话
+            foreach (ToolStripItem item in menu.DropDownItems)
+            {
+
+                action(item);
+
+                if (item is ToolStripMenuItem)
+                {
+                    ProcessDropDownItemsFont(item as ToolStripMenuItem, action);
+                }
+            }
+        }
+
+        static void ProcessSplitContainer(SplitContainer container,
+            delegate_action action)
+        {
+            action(container.Panel1);
+
+            foreach (Control control in container.Panel1.Controls)
+            {
+                ProcessChildren(control, action);
+            }
+
+            action(container.Panel2);
+
+            foreach (Control control in container.Panel2.Controls)
+            {
+                ProcessChildren(control, action);
+            }
+        }
+
+        #endregion
+
+        #region 错误状态
+
+        static void SetWholeColor(Color backColor, Color foreColor)
+        {
+            MainForm?.Invoke((Action)(() =>
+            {
+                ClientInfo.ProcessControl(MainForm,
+                    (o) =>
+                    {
+                        dynamic d = o;
+                        d.BackColor = backColor;
+                        d.ForeColor = foreColor;
+                    });
+
+#if NO
+                this.BackColor = backColor;
+                this.ForeColor = foreColor;
+                foreach (TabPage page in this.tabControl_main.TabPages)
+                {
+                    page.BackColor = backColor;
+                    page.ForeColor = foreColor;
+                }
+                this.toolStrip1.BackColor = backColor;
+                this.toolStrip1.ForeColor = foreColor;
+
+                this.menuStrip1.BackColor = backColor;
+                this.menuStrip1.ForeColor = foreColor;
+
+                this.statusStrip1.BackColor = backColor;
+                this.statusStrip1.ForeColor = foreColor;
+#endif
+            }));
+        }
+
+        // 错误状态
+        static string _errorState = "normal";    // error/retry/normal
+        // 错误状态描述
+        static string _errorStateInfo = "";
+
+        public static string ErrorState
+        {
+            get
+            {
+                return _errorState;
+            }
+        }
+
+        public static string ErrorStateInfo
+        {
+            get
+            {
+                return _errorStateInfo;
+            }
+        }
+
+        public static void SetErrorState(string state, string info)
+        {
+            if (state == "error")   // 出现错误，后面不再会重试
+                SetWholeColor(Color.DarkRed, Color.White);
+            else if (state == "retry")   // 出现错误，但后面会自动重试
+                SetWholeColor(Color.DarkOrange, Color.Black);
+            else if (state == "normal")  // 没有错误
+                SetWholeColor(SystemColors.Window, SystemColors.WindowText);
+            else
+                throw new Exception($"无法识别的 state={state}");
+
+            _errorState = state;
+            _errorStateInfo = info;
+        }
+
+        #endregion
+
     }
 }

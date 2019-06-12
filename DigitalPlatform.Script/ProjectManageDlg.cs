@@ -14,6 +14,7 @@ using DigitalPlatform.GUI;
 using DigitalPlatform.IO;
 using DigitalPlatform.Xml;
 using DigitalPlatform.CommonControl;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.Script
 {
@@ -1150,7 +1151,8 @@ namespace DigitalPlatform.Script
 
         void button_installVisualStudioCode_Click(object sender, System.EventArgs e)
         {
-            System.Diagnostics.Process.Start("iexplore", "https://code.visualstudio.com//");
+            System.Diagnostics.Process.Start(// "iexplore",
+                "https://code.visualstudio.com//");
         }
 
 

@@ -1,0 +1,187 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+using DigitalPlatform;
+using DigitalPlatform.Interfaces;
+
+namespace dp2SSL
+{
+    /// <summary>
+    /// 人脸通道集中管理
+    /// </summary>
+    public static class FaceManager
+    {
+        static string _state = "ok";    // ok/error
+
+        public static event TouchedEventHandler Touched = null;
+
+        public static ManagerBase<IBioRecognition> Base = new ManagerBase<IBioRecognition>();
+
+        public static event SetErrorEventHandler SetError
+        {
+            add
+            {
+                Base.AddSetErrorEvent(value);
+            }
+            remove
+            {
+                Base.RemoveSetErrorEvent(value);
+            }
+        }
+
+        public static void Clear()
+        {
+            Base.Clear();
+        }
+
+        public static string Url
+        {
+            get
+            {
+                return Base.Url;
+            }
+            set
+            {
+                Base.Url = value;
+            }
+        }
+
+        // 启动后台任务。
+        // 后台任务负责监视 人脸中心 里面新到的 message
+        public static void Start(
+            CancellationToken token)
+        {
+            // App.CurrentApp.Speak("启动后台线程");
+            Base.Start((channel) =>
+            {
+                var result = channel.Object.GetState("");
+                if (result.Value == -1)
+                    throw new Exception($"人脸中心当前处于 {result.ErrorCode} 状态({result.ErrorInfo})");
+                channel.Started = true;
+
+                channel.Object.EnableSendKey(false);
+            },
+            null,
+            null,
+            token);
+        }
+
+        public static NormalResult EnableSendkey(bool enable)
+        {
+            try
+            {
+                // 因为 EnableSendkey 是可有可无的请求，如果 Url 为空就算了
+                if (string.IsNullOrEmpty(Base.Url))
+                    return new NormalResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.EnableSendKey(enable);
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static NormalResult GetState(string style)
+        {
+            try
+            {
+                // 因为 GetState 是可有可无的请求，如果 Url 为空就算了
+                if (string.IsNullOrEmpty(Base.Url))
+                    return new NormalResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.GetState(style);
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static RecognitionFaceResult RecognitionFace(string style)
+        {
+            try
+            {
+                //if (string.IsNullOrEmpty(Base.Url))
+                //    return new RecognitionFaceResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.RecognitionFace(style);
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new RecognitionFaceResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+    }
+}

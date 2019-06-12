@@ -13,6 +13,7 @@ using System.Windows.Forms;
 using System.Xml;
 
 using DigitalPlatform;
+using DigitalPlatform.Core;
 using DigitalPlatform.GUI;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.RFID;
@@ -102,7 +103,7 @@ namespace dp2Circulation
 
             Task.Run(() =>
             {
-                InitialRfidChannel();
+                //InitialRfidChannel();
                 OpenRfidCapture(false);
             });
 
@@ -132,7 +133,11 @@ namespace dp2Circulation
             if (_timerRefresh != null)
                 _timerRefresh.Dispose();
 
-            ReleaseRfidChannel();
+            _rfidChannels?.Close((channel) =>
+            {
+                EndRfidChannel(channel);
+            });
+            //ReleaseRfidChannel();
 
             Program.MainForm.AppInfo.SetBoolean("rfidtoolform",
     "auto_refresh",
@@ -158,20 +163,20 @@ namespace dp2Circulation
                     goto ERROR1;
                 }
 
-                RfidChannel channel = StartRfidChannel(
-                    Program.MainForm.RfidCenterUrl,
+                RfidChannel channel = GetRfidChannel(
                     out strError);
                 if (channel == null)
                 {
-                    strError = "StartRfidChannel() error";
+                    strError = $"GetRfidChannel() error: {strError}";
                     goto ERROR1;
                 }
+
                 try
                 {
                     ListTagsResult result = channel.Object.ListTags("*", null);
                     if (result.Value == -1)
                     {
-                        strError = result.ErrorInfo;
+                        strError = $"ListTags() error. ErrorInfo={result.ErrorInfo}, ErrorCode={result.ErrorCode}";
                         goto ERROR1;
                     }
 
@@ -283,7 +288,7 @@ namespace dp2Circulation
                                 {
                                     this.Invoke((Action)(() =>
                                     {
-                                        AutoFixEas();
+                                        AutoFixEas(channel);
                                     }));
                                 }
                             }
@@ -312,7 +317,7 @@ namespace dp2Circulation
                 }
                 finally
                 {
-                    EndRfidChannel(channel);
+                    ReturnRfidChannel(channel);
                 }
 
                 ERROR1:
@@ -482,14 +487,14 @@ namespace dp2Circulation
             if (tag.Protocol == InventoryInfo.ISO14443A)
                 return; // 暂时还不支持对 14443A 的卡进行 GetTagInfo() 操作
 
-            RfidChannel channel = StartRfidChannel(
-    Program.MainForm.RfidCenterUrl,
+            RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
             {
-                strError = "StartRfidChannel() error";
+                strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
+
             try
             {
                 GetTagInfoResult result = channel.Object.GetTagInfo("*", tag.UID);
@@ -535,7 +540,7 @@ namespace dp2Circulation
             }
             finally
             {
-                EndRfidChannel(channel);
+                ReturnRfidChannel(channel);
             }
             ERROR1:
             this.Invoke((Action)(() =>
@@ -710,58 +715,74 @@ namespace dp2Circulation
         }
 
         // 自动修复 EAS
-        void AutoFixEas()
+        void AutoFixEas(RfidChannel channel)
         {
             string strError = "";
 
-            IdInfo info = IdInfo.Parse(this.SelectedID);
-
-            foreach (ListViewItem item in this.listView_tags.Items)
+#if NO
+            RfidChannel channel = GetRfidChannel(
+    out strError);
+            if (channel == null)
             {
-                string uid = ListViewUtil.GetItemText(item, COLUMN_UID);
+                strError = $"GetRfidChannel() error: {strError}";
+                goto ERROR1;
+            }
+#endif
+            try
+            {
+                IdInfo info = IdInfo.Parse(this.SelectedID);
 
-                ItemInfo item_info = (ItemInfo)item.Tag;
-                var tag_info = item_info.OneTag.TagInfo;
-                if (tag_info == null)
-                    continue;
-                LogicChip chip = LogicChip.From(tag_info.Bytes,
-                    (int)tag_info.BlockSize);
-                string pii = chip.FindElement(ElementOID.PII)?.Text;
-                if ((info.Prefix == "pii" && pii == info.Text)
-                    || (info.Prefix == "uid" && uid == info.Text))
+                foreach (ListViewItem item in this.listView_tags.Items)
                 {
-                    // 获得册记录的外借状态。
-                    // return:
-                    //      -1  出错
-                    //      0   没有被外借
-                    //      1   在外借状态
-                    int nRet = GetCirculationState(item_info.Xml,
-                        out strError);
-                    if (nRet == -1)
-                        goto ERROR1;
+                    string uid = ListViewUtil.GetItemText(item, COLUMN_UID);
 
-                    // 便于观察
-                    // Application.DoEvents();
-                    // Thread.Sleep(2000);
-
-                    // 检测 EAS 是否正确
-                    NormalResult result = null;
-                    // TODO: 这里发现不一致的时候，是否要出现明确提示，让操作者知晓？
-                    if (nRet == 1 && tag_info.EAS == true)
-                        result = SetEAS(_rfidChannel, "*", "uid:" + tag_info.UID, false, out strError);
-                    else if (nRet == 0 && tag_info.EAS == false)
-                        result = SetEAS(_rfidChannel, "*", "uid:" + tag_info.UID, true, out strError);
-                    else
+                    ItemInfo item_info = (ItemInfo)item.Tag;
+                    var tag_info = item_info.OneTag.TagInfo;
+                    if (tag_info == null)
                         continue;
-
-                    if (result.Value == -1)
+                    LogicChip chip = LogicChip.From(tag_info.Bytes,
+                        (int)tag_info.BlockSize);
+                    string pii = chip.FindElement(ElementOID.PII)?.Text;
+                    if ((info.Prefix == "pii" && pii == info.Text)
+                        || (info.Prefix == "uid" && uid == info.Text))
                     {
-                        strError = $"{result.ErrorInfo}, error_code={result.ErrorCode}";
-                        goto ERROR1;
-                    }
+                        // 获得册记录的外借状态。
+                        // return:
+                        //      -1  出错
+                        //      0   没有被外借
+                        //      1   在外借状态
+                        int nRet = GetCirculationState(item_info.Xml,
+                            out strError);
+                        if (nRet == -1)
+                            goto ERROR1;
 
-                    this.EasFixed = true;
+                        // 便于观察
+                        // Application.DoEvents();
+                        // Thread.Sleep(2000);
+
+                        // 检测 EAS 是否正确
+                        NormalResult result = null;
+                        // TODO: 这里发现不一致的时候，是否要出现明确提示，让操作者知晓？
+                        if (nRet == 1 && tag_info.EAS == true)
+                            result = SetEAS(channel, "*", "uid:" + tag_info.UID, false, out strError);
+                        else if (nRet == 0 && tag_info.EAS == false)
+                            result = SetEAS(channel, "*", "uid:" + tag_info.UID, true, out strError);
+                        else
+                            continue;
+
+                        if (result.Value == -1)
+                        {
+                            strError = $"{result.ErrorInfo}, error_code={result.ErrorCode}";
+                            goto ERROR1;
+                        }
+
+                        this.EasFixed = true;
+                    }
                 }
+            }
+            finally
+            {
+                // ReturnRfidChannel(channel);
             }
 
             if (this._mode == "auto_fix_eas" && this.EasFixed)
@@ -805,6 +826,58 @@ namespace dp2Circulation
 
         #region RFID Channel
 
+        ChannelPool<RfidChannel> _rfidChannels = new ChannelPool<RfidChannel>();
+
+        RfidChannel GetRfidChannel()
+        {
+            if (string.IsNullOrEmpty(Program.MainForm.RfidCenterUrl))
+                throw new Exception("尚未配置 RFID 中心 URL");
+
+            return _rfidChannels.GetChannel(() =>
+            {
+                var channel = StartRfidChannel(
+        Program.MainForm.RfidCenterUrl,
+        out string strError);
+                if (channel == null)
+                    throw new Exception(strError);
+                return channel;
+            });
+        }
+
+        RfidChannel GetRfidChannel(out string strError)
+        {
+            strError = "";
+            if (string.IsNullOrEmpty(Program.MainForm.RfidCenterUrl))
+            {
+                strError = "尚未配置 RFID 中心 URL";
+                return null;
+            }
+
+            try
+            {
+                return _rfidChannels.GetChannel(() =>
+                {
+                    var channel = StartRfidChannel(
+            Program.MainForm.RfidCenterUrl,
+            out string strError1);
+                    if (channel == null)
+                        throw new Exception(strError1);
+                    return channel;
+                });
+            }
+            catch (Exception ex)
+            {
+                strError = ex.Message;
+                return null;
+            }
+        }
+
+        void ReturnRfidChannel(RfidChannel channel)
+        {
+            _rfidChannels.ReturnChannel(channel);
+        }
+
+#if REMOVED
         public RfidChannel _rfidChannel = null;
 
         void InitialRfidChannel()
@@ -838,7 +911,9 @@ namespace dp2Circulation
                 _rfidChannel = null;
             }
         }
+#endif
 
+#if REMOVED
         void OpenRfidCapture(bool open)
         {
             if (_rfidChannel != null)
@@ -851,6 +926,31 @@ namespace dp2Circulation
                 {
 
                 }
+            }
+        }
+#endif
+
+        void OpenRfidCapture(bool open)
+        {
+            try
+            {
+                var channel = GetRfidChannel();
+                try
+                {
+                    channel.Object.EnableSendKey(open);
+                }
+                catch
+                {
+
+                }
+                finally
+                {
+                    ReturnRfidChannel(channel);
+                }
+            }
+            catch
+            {
+
             }
         }
 
@@ -1109,14 +1209,14 @@ namespace dp2Circulation
 
         async Task ClearTagContent(ListViewItem item)
         {
-            RfidChannel channel = StartRfidChannel(
-    Program.MainForm.RfidCenterUrl,
+            RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
             {
-                strError = "StartRfidChannel() error";
+                strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
+
             try
             {
                 ItemInfo item_info = (ItemInfo)item.Tag;
@@ -1154,7 +1254,7 @@ namespace dp2Circulation
             }
             finally
             {
-                EndRfidChannel(channel);
+                ReturnRfidChannel(channel);
             }
             ERROR1:
             this.Invoke((Action)(() =>
@@ -1190,14 +1290,14 @@ namespace dp2Circulation
             if (item_info.LogicChipItem.Changed == false)
                 return false;
 
-            RfidChannel channel = StartRfidChannel(
-    Program.MainForm.RfidCenterUrl,
+            RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
             {
-                strError = "StartRfidChannel() error";
+                strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
+
             try
             {
                 var old_tag_info = item_info.OneTag.TagInfo;
@@ -1226,7 +1326,7 @@ namespace dp2Circulation
             }
             finally
             {
-                EndRfidChannel(channel);
+                ReturnRfidChannel(channel);
             }
             ERROR1:
             this.Invoke((Action)(() =>

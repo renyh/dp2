@@ -18,14 +18,15 @@ using System.Diagnostics;
 
 using static FingerprintCenter.FingerPrint;
 
-using DigitalPlatform.CommonControl;
-using DigitalPlatform.CirculationClient;
-using DigitalPlatform.LibraryClient;
-using DigitalPlatform.IO;
-using DigitalPlatform.Interfaces;
 using DigitalPlatform;
+using DigitalPlatform.IO;
 using DigitalPlatform.Text;
+using DigitalPlatform.Interfaces;
+using DigitalPlatform.CommonControl;
+using DigitalPlatform.LibraryClient;
+using DigitalPlatform.CirculationClient;
 using static DigitalPlatform.CirculationClient.BioUtil;
+using Microsoft.Win32;
 
 namespace FingerprintCenter
 {
@@ -53,7 +54,36 @@ namespace FingerprintCenter
                 _floatingMessage.Show(this);
             }
 
-            UsbNotification.RegisterUsbDeviceNotification(this.Handle);
+            UsbInfo.StartWatch((add_count, remove_count) =>
+            {
+                // this.OutputHistory($"add_count:{add_count}, remove_count:{remove_count}", 1);
+                string type = "disconnected";
+                if (add_count > 0)
+                    type = "connected";
+
+                BeginRefreshReaders(type, new CancellationToken());
+            },
+            new CancellationToken());
+
+            // UsbNotification.RegisterUsbDeviceNotification(this.Handle);
+            SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
+        }
+
+        private void SystemEvents_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            switch (e.Mode)
+            {
+                case PowerModes.Resume:
+                    Task.Run(() =>
+                    {
+                        Task.Delay(TimeSpan.FromSeconds(5)).Wait();
+                        this.Speak("指纹中心被唤醒");
+                        BeginRefreshReaders("connected", new CancellationToken());
+                    });
+                    break;
+                case PowerModes.Suspend:
+                    break;
+            }
         }
 
         private const int CP_NOCLOSE_BUTTON = 0x200;
@@ -137,6 +167,15 @@ bool bClickClose = false)
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            {
+                notifyIcon1.Visible = true;
+                notifyIcon1.BalloonTipIcon = ToolTipIcon.Info;
+                notifyIcon1.BalloonTipText = "指纹中心已经启动";
+                notifyIcon1.ShowBalloonTip(1000);
+            }
+
+            ClientInfo.SetErrorState("retry", "正在启动");
+
             if (DetectVirus.Detect360() || DetectVirus.DetectGuanjia())
             {
                 MessageBox.Show(this, "fingerprintcenter 被木马软件干扰，无法启动");
@@ -206,7 +245,9 @@ bool bClickClose = false)
                 });
             }
             else
-                BeginStart();
+            {
+                var task = BeginStart();
+            }
 
             // DisplayText("1");
 
@@ -226,16 +267,23 @@ bool bClickClose = false)
         // 指纹功能是否初始化成功
         bool _initialized = false;
 
-        void BeginStart()
+        async Task BeginStart()
         {
             this.ClearMessage();
+            this.Invoke((Action)(() =>
+            {
+                toolStripStatusLabel1.Text = "";
+            }));
 
             if (_initialized == true)
                 return;
 
             this.ShowMessage("开始启动");
-            this.OutputHistory("重新创建指纹缓存");
-            Task.Run(() =>
+            if (_refreshCount > 0)
+                this.OutputHistory("(重试)重新创建指纹缓存");
+            else
+                this.OutputHistory("重新创建指纹缓存");
+            await Task.Run(() =>
             {
                 NormalResult result = StartFingerPrint();
                 if (result.Value == -1)
@@ -243,38 +291,51 @@ bool bClickClose = false)
                     string strError = "指纹功能启动失败: " + result.ErrorInfo;
                     Speak(strError, true);
                     this.ShowMessage(strError, "red", true);
+                    OutputHistory(strError, 2);
 
                     if (result.ErrorCode == "driver not install")
                     {
                         Task.Run(() => { InstallDriver("您的电脑上尚未安装'中控'指纹仪厂家驱动。"); });
+                    }
+                    else
+                    {
+
                     }
                 }
                 else
                 {
                     _initialized = true;
                     Speak("指纹功能启动成功");
+                    OutputHistory("指纹功能启动成功", 0);
                 }
             });
         }
 
+        private static readonly Object _syncRoot_start = new Object(); // 2019/5/20
+
         NormalResult StartFingerPrint()
         {
-            DisplayText("StartFingerPrint ...");
-
-            _cancel.Cancel();
-
-            _cancel = new CancellationTokenSource();
-
-            DisplayText("正在初始化指纹环境 ...");
-            DisplayText("正在打开指纹设备 ...");
-
+            lock (_syncRoot_start)
             {
-                NormalResult result = FingerPrint.Init(CurrentDeviceIndex);
-                if (result.Value == -1)
-                    return result;
-            }
+                DisplayText("StartFingerPrint ...");
 
-            UpdateDeviceList();
+                _cancel.Cancel();
+
+                _cancel = new CancellationTokenSource();
+
+                DisplayText("正在初始化指纹环境 ...");
+                DisplayText("正在打开指纹设备 ...");
+
+                {
+                    NormalResult result = FingerPrint.Init(CurrentDeviceIndex);
+                    if (result.Value == -1)
+                    {
+                        ClientInfo.SetErrorState("error", result.ErrorInfo);
+                        return result;
+                    }
+                }
+
+                UpdateDeviceList();
 #if NO
 
             result = FingerPrint.OpenZK();
@@ -282,8 +343,9 @@ bool bClickClose = false)
                 return result;
 #endif
 
-            DisplayText("Init Cache ...");
+                DisplayText("Init Cache ...");
 
+#if REMOVED
             {
                 // 初始化指纹缓存
                 // return:
@@ -297,19 +359,84 @@ bool bClickClose = false)
                     // 开始捕捉指纹
                     FingerPrint.StartCapture(_cancel.Token);
                     // 如果是请求 dp2library 服务器出错，则依然要启动 timer，这样可以自动每隔一段时间重试初始化
-                    if (result.ErrorCode == "RequestError")
+                    // TODO: 界面上要出现醒目的警告(或者不停语音提示)，表示请求 dp2library 出错，从而没有任何读者指纹信息可供识别时候利用
+                    if (result.ErrorCode == "RequestError"
+                        || result.ErrorCode == "NotLogin")
+                    {
+                        // TODO: 要提醒用户，此时没有初始化成功，但后面会重试
+                        SetErrorState("retry");
                         StartTimer();
+                    }
+                    else
+                    {
+                        // TODO: 需要进入警告状态(表示软件后面不会自动重试)，让工作人员明白必须介入
+                        SetErrorState("error");
+                    }
+
                     return result;
+                }
+                else
+                {
+                    SetErrorState("normal");
                 }
                 if (result.Value == 0)
                     this.ShowMessage(result.ErrorInfo, "yellow", true);
             }
+#endif
+                {
+                    var result = TryInitFingerprintCache();
+                    if (result.Value == -1)
+                        return result;
+                }
 
-            // 开始捕捉指纹
-            FingerPrint.StartCapture(_cancel.Token);
+                // 开始捕捉指纹
+                FingerPrint.StartCapture(_cancel.Token);
 
-            //
-            StartTimer();
+                //
+                StartTimer();
+
+                return new NormalResult();
+            }
+        }
+
+        NormalResult TryInitFingerprintCache()
+        {
+            // 初始化指纹缓存
+            // return:
+            //      -1  出错
+            //      0   没有获得任何数据
+            //      >=1 获得了数据
+            var result = _initFingerprintCache();
+            if (result.Value == -1)
+            {
+
+                // 开始捕捉指纹
+                FingerPrint.StartCapture(_cancel.Token);
+                // 如果是请求 dp2library 服务器出错，则依然要启动 timer，这样可以自动每隔一段时间重试初始化
+                // TODO: 界面上要出现醒目的警告(或者不停语音提示)，表示请求 dp2library 出错，从而没有任何读者指纹信息可供识别时候利用
+                if (result.ErrorCode == "RequestError")
+                {
+                    StartTimer();
+                }
+                else
+                    EndTimer();
+
+                // result.ErrorCode == "NotLogin"
+                // 密码不正确的情况不要自动重试。因为重试超过十次会让当前账户被加入黑名单十分钟
+
+                if (_timer == null)
+                    ClientInfo.SetErrorState("error", result.ErrorInfo);
+                else
+                    ClientInfo.SetErrorState("retry", result.ErrorInfo);
+
+                return result;
+            }
+            else
+            {
+                ClientInfo.SetErrorState("normal", "");
+            }
+            if (result.Value == 0)
+                this.ShowMessage(result.ErrorInfo, "yellow", true);
 
             return new NormalResult();
         }
@@ -322,6 +449,15 @@ bool bClickClose = false)
                     null,
                     TimeSpan.FromSeconds(30),
                     TimeSpan.FromMinutes(5));   // 5 分钟
+        }
+
+        void EndTimer()
+        {
+            if (_timer != null)
+            {
+                _timer.Dispose();
+                _timer = null;
+            }
         }
 
         private void FingerPrint_ImageReady(object sender, ImageReadyEventArgs e)
@@ -446,16 +582,12 @@ bool bClickClose = false)
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
-            // 2019/2/21
-            if (_timer != null)
-            {
-                _timer.Dispose();
-                _timer = null;
-            }
+            EndTimer();
 
             _cancel.Cancel();
 
-            UsbNotification.UnregisterUsbDeviceNotification();
+            SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
+            // UsbNotification.UnregisterUsbDeviceNotification();
 
             {
                 if (this.checkBox_cfg_savePasswordLong.Checked == false)
@@ -610,7 +742,9 @@ bool bClickClose = false)
         SpeechSynthesizer m_speech = new SpeechSynthesizer();
         string m_strSpeakContent = "";
 
-        public void Speak(string strText, bool bError = false)
+        public void Speak(string strText,
+            bool bError = false,
+            bool cancel_before = true)
         {
             string color = "gray";
             if (bError)
@@ -637,7 +771,8 @@ bool bClickClose = false)
             {
                 try
                 {
-                    this.m_speech.SpeakAsyncCancelAll();
+                    if (cancel_before)
+                        this.m_speech.SpeakAsyncCancelAll();
                     this.m_speech.SpeakAsync(strText);
                 }
                 catch (System.Runtime.InteropServices.COMException)
@@ -682,7 +817,7 @@ bool bClickClose = false)
         //      -1  出错
         //      0   没有获得任何数据
         //      >=1 获得了数据
-        NormalResult InitFingerprintCache()
+        NormalResult _initFingerprintCache()
         {
             string strError = "";
             string strUrl = (string)this.Invoke((Func<string>)(() =>
@@ -692,7 +827,12 @@ bool bClickClose = false)
             if (string.IsNullOrEmpty(strUrl))
             {
                 strError = "尚未配置 dp2library 服务器 URL，无法获得读者指纹信息";
-                return new NormalResult { Value = -1, ErrorInfo = strError };
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = strError,
+                    ErrorCode = "emptyServerUrl"
+                };
             }
 
             // 先把正在运行的同步过程中断
@@ -705,6 +845,13 @@ bool bClickClose = false)
             try
             {
                 ReplicationPlan plan = BioUtil.GetReplicationPlan(channel);
+                if (plan.Value == -1)
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorInfo = plan.ErrorInfo,
+                        ErrorCode = plan.ErrorCode
+                    };
                 this.Invoke((Action)(() =>
                 {
                     this.textBox_replicationStart.Text = plan.StartDate;
@@ -740,7 +887,7 @@ bool bClickClose = false)
                 //      -1  出错
                 //      0   没有获得任何数据
                 //      >=1 获得了数据
-                var result = InitFingerprintCache();
+                var result = _initFingerprintCache();
                 if (result.Value == -1)
                     ShowMessageBox(result.ErrorInfo);
             });
@@ -803,6 +950,37 @@ MessageBoxDefaultButton.Button2);
         }
 
         #region ipc channel
+
+        public static bool CallActivate(string strUrl)
+        {
+            IpcClientChannel channel = new IpcClientChannel();
+            IFingerprint obj = null;
+
+            ChannelServices.RegisterChannel(channel, false);
+            try
+            {
+                obj = (IFingerprint)Activator.GetObject(typeof(IFingerprint),
+                    strUrl);
+                if (obj == null)
+                {
+                    // strError = "could not locate Fingerprint Server";
+                    return false;
+                }
+                obj.ActivateWindow();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (obj != null)
+                {
+                    ChannelServices.UnregisterChannel(channel);
+                }
+            }
+        }
 
         IpcClientChannel m_fingerprintChannel = new IpcClientChannel();
         IFingerprint m_fingerprintObj = null;
@@ -898,6 +1076,8 @@ MessageBoxDefaultButton.Button2);
             else
             {
                 this.button_cancel.Visible = bVisible;
+                if (bVisible)
+                    this.tabControl_main.SelectedTab = this.tabPage_start;
             }
         }
 
@@ -1041,7 +1221,7 @@ string strHtml)
 
         public void OutputHistory(string strText, int nWarningLevel = 0)
         {
-            OutputText(DateTime.Now.ToShortTimeString() + " " + strText, nWarningLevel);
+            OutputText(DateTime.Now.ToLongTimeString() + " " + strText, nWarningLevel);
         }
 
         // parameters:
@@ -1155,61 +1335,198 @@ Keys keyData)
         #endregion
 #endif
 
+        public void ActivateWindow()
+        {
+            this.Invoke((Action)(() =>
+            {
+                this.Speak("恢复窗口显示");
+                this.ShowInTaskbar = true;
+                this.WindowState = FormWindowState.Normal;
+                // 把窗口翻到前面
+                //this.Activate();
+                API.SetForegroundWindow(this.Handle);
+            }));
+        }
+
+        public const int WM_SHOW1 = API.WM_USER + 200;
+
         protected override void WndProc(ref Message m)
         {
-            base.WndProc(ref m);
+#if REMOVED
+            if (m.Msg == Program.WM_MY_MSG)
+            {
+                this.Speak("收到消息");
+
+                if ((m.WParam.ToInt32() == 0xCDCD) && (m.LParam.ToInt32() == 0xEFEF))
+                {
+                    if (WindowState == FormWindowState.Minimized)
+                    {
+                        WindowState = FormWindowState.Normal;
+                    }
+                    // Bring window to front.
+                    bool temp = TopMost;
+                    TopMost = true;
+                    TopMost = temp;
+                    // Set focus to the window.
+                    Activate();
+                }
+            }
+#endif
+
+#if NO
+            if (m.Msg == WM_SHOW1)
+            {
+                this.ShowInTaskbar = true;
+                WindowState = FormWindowState.Normal;
+                this.Speak("收到消息");
+                return;
+            }
+#endif
+
+#if NO
             if (m.Msg == UsbNotification.WmDevicechange)
             {
                 switch ((int)m.WParam)
                 {
                     case UsbNotification.DbtDeviceremovecomplete:
                         //MessageBox.Show(this, "removed"); 
-                        BeginRefreshReaders();
+                        BeginRefreshReaders(new CancellationToken());
                         break;
                     case UsbNotification.DbtDevicearrival:
                         //MessageBox.Show(this, "added");
-                        BeginRefreshReaders();
+                        BeginRefreshReaders(new CancellationToken());
                         break;
                 }
             }
+#endif
+            base.WndProc(ref m);
         }
 
+        int _refreshCount = 0;
+        const int _delaySeconds = 5;
+        Task _refreshTask = null;
+
+        void BeginRefreshReaders(string action,
+            CancellationToken token)
+        {
+            if (_refreshTask != null)
+            {
+                if (action == "disconnected")
+                {
+                    if (_refreshCount < 1)
+                    {
+                        _refreshCount++;
+                        this.OutputHistory($"disconnected ++ _refreshCount={_refreshCount}", 0);
+                    }
+                    else
+                        this.OutputHistory($"disconnected passed _refreshCount={_refreshCount}", 0);
+                }
+                else
+                {
+                    _refreshCount++;
+                    this.OutputHistory($"{action} ++ _refreshCount={_refreshCount}", 0);
+                }
+                return;
+            }
+
+            // _refreshCount = 2;
+            this.OutputHistory($"new task _refreshCount={_refreshCount}", 0);
+            _refreshTask = Task.Run(() =>
+            {
+                int delta = 1;  // 第一次额外增加的秒数
+                while (_refreshCount-- >= 0)
+                {
+                    this.OutputHistory($"delay begin", 0);
+                    Task.Delay(TimeSpan.FromSeconds(_delaySeconds + delta)).Wait(token);
+                    this.OutputHistory($"delay end", 0);
+
+                    if (token.IsCancellationRequested)
+                        break;
+                    // 迫使重新启动
+                    _initialized = false;
+                    this.OutputHistory($"initial begin", 0);
+                    BeginStart().Wait(token);
+                    this.OutputHistory($"initial end", 0);
+                    if (token.IsCancellationRequested)
+                        break;
+
+                    // 如果初始化没有成功，则要追加初始化
+                    if (ClientInfo.ErrorState == "normal")
+                        break;
+
+                    delta = 0;
+                }
+                _refreshTask = null;
+                _refreshCount = 0;
+                this.OutputHistory($"task = null", 0);
+            });
+        }
+
+#if REMOVED
+        int _refreshCount = 2;
         System.Threading.Timer _refreshTimer = null;
         private static readonly Object _syncRoot_refresh = new Object();
+        const int _delaySeconds = 3;
 
-        // 2 秒内多次到来的请求，会被合并为一次执行
+        // (_delaySeconds) 秒内多次到来的请求，会被合并为一次执行
         void BeginRefreshReaders()
         {
+            // Speak("重新初始化指纹设备", false, false);
             lock (_syncRoot_refresh)
             {
+                _refreshCount++;
                 if (_refreshTimer == null)
                 {
+                    _refreshCount = 2;
                     _refreshTimer = new System.Threading.Timer(
             new System.Threading.TimerCallback(refreshTimerCallback),
             null,
-            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(_delaySeconds), TimeSpan.FromSeconds(_delaySeconds));
                 }
             }
         }
+
+        int _inRefresh = 0;
 
         void refreshTimerCallback(object o)
         {
-            // 迫使重新启动
-            _initialized = false;
-            BeginStart();
-            lock (_syncRoot_refresh)
+            int v = Interlocked.Increment(ref this._inRefresh);
+            try
             {
-                if (_refreshTimer != null)
+                // 防止重入
+                if (v > 1)
+                    return;
+
+                // 迫使重新启动
+                _initialized = false;
+                BeginStart().Wait();
+
+                // 如果初始化没有成功，则要追加初始化
+                _refreshCount--;
+                if (this.ErrorState != "normal" && _refreshCount > 0)
+                    return;
+
+                // 取消 Timer
+                lock (_syncRoot_refresh)
                 {
-                    _refreshTimer.Dispose();
-                    _refreshTimer = null;
+                    if (_refreshTimer != null)
+                    {
+                        _refreshTimer.Dispose();
+                        _refreshTimer = null;
+                    }
                 }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref this._inRefresh);
             }
         }
 
+#endif
+
         private void ToolStripMenuItem_start_Click(object sender, EventArgs e)
         {
-            BeginStart();
+            var task = BeginStart();
         }
 
         private void ToolStripMenuItem_reopen_Click(object sender, EventArgs e)
@@ -1225,7 +1542,7 @@ Keys keyData)
                 return;
 
             _initialized = false;
-            BeginStart();
+            var task = BeginStart();
         }
 
         // 当面板上服务器 URL、用户名、密码发生变动以后，清除以前的 ChannelPool。迫使前端重新登录
@@ -1234,6 +1551,8 @@ Keys keyData)
         {
             _channelPool.Clear();
             this.textBox_replicationStart.Text = "";
+            // 2019/5/14
+            _initialized = false;
         }
 
         private void MenuItem_lightWhite_Click(object sender, EventArgs e)
@@ -1281,7 +1600,7 @@ Keys keyData)
             {
                 // 先检查首次初始化指纹缓存是否完成。没有完成(因为曾出错)的情况，要先尝试首次初始化指纹缓存
                 // TODO: 这里需要优化的是，应该是仅仅是 dp2library/dp2libraryxe 未响应的出错以后才需要重试 BeginStart()。其他情况如果频繁重试，可能并不合适
-                BeginStart();
+                var task = BeginStart();
                 return;
             }
 
@@ -1383,6 +1702,22 @@ token);
         // 指立即从服务器获取最新日志，同步指纹变动信息
         private void MenuItem_refresh_Click(object sender, EventArgs e)
         {
+#if NO
+            string strStartDate = (string)this.Invoke((Func<string>)(() =>
+            {
+                return this.textBox_replicationStart.Text;
+            }));
+
+            // 如果没有明确的日期，那就从头开始初始化指纹缓存
+            if (string.IsNullOrEmpty(strStartDate))
+            {
+                var result = TryInitFingerprintCache();
+                if (result.Value == -1)
+                    MessageBox.Show(this, result.ErrorInfo);
+            }
+            else
+                BeginReplication();
+#endif
             BeginReplication();
         }
 
@@ -1555,7 +1890,12 @@ token);
         {
             get
             {
-                string index = this.comboBox_deviceList.Text;
+
+                string index = (string)this.Invoke(new Func<string>(() =>
+                {
+                    return this.comboBox_deviceList.Text;
+                }));
+
                 if (string.IsNullOrEmpty(index))
                     return 0;
                 if (Int32.TryParse(index, out int v) == false)
@@ -1693,6 +2033,44 @@ token);
         {
             // m_fingerprintObj.EnableSendKey(true);
             FingerprintServer._enableSendKey(true);
+        }
+
+        private void notifyIcon1_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            this.ShowInTaskbar = true;
+            // notifyIcon1.Visible = false;
+            WindowState = FormWindowState.Normal;
+        }
+
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            if (WindowState == FormWindowState.Minimized)
+            {
+                this.ShowInTaskbar = false;
+                notifyIcon1.Visible = true;
+                notifyIcon1.BalloonTipText = "指纹中心已经隐藏";
+                notifyIcon1.ShowBalloonTip(1000);
+            }
+        }
+
+        private void ToolStripMenuItem_deleteShortcut_Click(object sender, EventArgs e)
+        {
+            ClientInfo.RemoveShortcutFromStartupGroup("dp2-指纹中心", true);
+        }
+
+        private void ToolStripMenuItem_showUsbInfo_Click(object sender, EventArgs e)
+        {
+            var infos = UsbInfo.GetUSBDevices();
+            MessageDlg.Show(this, UsbInfo.ToString(infos), "USB device info");
+        }
+
+        private void ToolStripMenuItem_startWatchUsbChange_Click(object sender, EventArgs e)
+        {
+            UsbInfo.StartWatch((add_count, remove_count) =>
+                {
+                    this.OutputHistory($"add_count:{add_count}, remove_count:{remove_count}", 1);
+                },
+                new CancellationToken());
         }
     }
 

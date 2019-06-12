@@ -10,19 +10,20 @@ using System.Collections.Generic;
 using System.Xml.XPath;
 using System.Xml.Xsl;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
-using DigitalPlatform;
 using DigitalPlatform.Xml;
 using DigitalPlatform.Text;
-using DigitalPlatform.IO;
 using DigitalPlatform.ResultSet;
-using DigitalPlatform.Range;
 
 namespace DigitalPlatform.rms
 {
     // 数据库基类
     public class Database
     {
+        // 快速导入的结束阶段任务
+        internal List<Task<NormalResult>> _tasks = new List<Task<NormalResult>>();
+
         public RecordIDStorage RebuildIDs = null;
 
         // 数据库锁
@@ -95,6 +96,19 @@ namespace DigitalPlatform.rms
         // 关闭数据库对象
         internal virtual void Close()
         {
+            DeleteRebuildIDs();
+        }
+
+        public void DeleteRebuildIDs()
+        {
+            // 2019/5/8
+            if (this.RebuildIDs != null
+                // && this.RebuildIDs.Count > 0
+                )
+            {
+                this.RebuildIDs.Delete();
+                this.RebuildIDs = null;
+            }
         }
 
         // 将 Connection 的 Transaction Commit
@@ -1390,13 +1404,13 @@ namespace DigitalPlatform.rms
 
                 if (records.Count > 100)
                 {
-                    List<RecordBody> outputs = null;
+                    // List<RecordBody> outputs = null;
 
                     int nRet = WriteRecords(
                         null,   // User oUser,
                         records,
                         strSubStyle,
-                        out outputs,
+                        out List<RecordBody> outputs,
                         out strError);
                     if (nRet == -1)
                         return -1;
@@ -1408,21 +1422,21 @@ namespace DigitalPlatform.rms
                     records.Clear();
                 }
 
-                RecordBody record = new RecordBody();
-                record.Path = "./" + strID;
+                RecordBody record = new RecordBody
+                {
+                    Path = "./" + strID
+                };
                 records.Add(record);
             }
 
             // 最后一批
             if (records.Count > 0)
             {
-                List<RecordBody> outputs = null;
-
                 int nRet = WriteRecords(
                     null,   // User oUser,
                     records,
                     strSubStyle,
-                    out outputs,
+                    out List<RecordBody> outputs,
                     out strError);
                 if (nRet == -1)
                     return -1;

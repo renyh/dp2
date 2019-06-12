@@ -17,6 +17,7 @@ using DigitalPlatform.Text;
 using DigitalPlatform.Xml;
 using DigitalPlatform.CommonControl;
 using DigitalPlatform;
+using DigitalPlatform.Core;
 
 namespace dp2Circulation
 {
@@ -280,6 +281,8 @@ namespace dp2Circulation
             else
                 param.IsBarcodeFont = false;
 
+            param.PrintBorder = this.checkBox_border.Checked;
+
             param.Font = Global.BuildFont(strFontString);
 
             param.LineFormats.Clear();
@@ -413,6 +416,8 @@ namespace dp2Circulation
                 this.textBox_labelFont.Text = Global.GetBarcodeFontString(param.Font);
             else
                 this.textBox_labelFont.Text = FontUtil.GetFontString(param.Font);
+
+            this.checkBox_border.Checked = param.PrintBorder;
 
             this.listView_lineFormats.Items.Clear();
             foreach (LineFormat line in param.LineFormats)
@@ -1617,6 +1622,14 @@ out strError);
             {
                 this.checkBox_gridLine.Checked = value;
             }
+        }
+
+        private void checkBox_border_CheckedChanged(object sender, EventArgs e)
+        {
+            this.labelDesignControl1.LabelParam = this.GetLabelParam();
+            this.labelDesignControl1.Invalidate();
+            _panelVersion++;
+            SetChanged();
         }
     }
 }

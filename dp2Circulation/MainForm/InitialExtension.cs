@@ -16,6 +16,8 @@ using System.Web;
 using System.Threading.Tasks;
 using System.Net;
 
+using log4net;
+
 using Ionic.Zip;
 using AsyncPluggableProtocol;
 
@@ -30,7 +32,7 @@ using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.Drawing;
 using DigitalPlatform.CommonControl;
-using log4net;
+using DigitalPlatform.Core;
 
 namespace dp2Circulation
 {
@@ -39,6 +41,9 @@ namespace dp2Circulation
     /// </summary>
     public partial class MainForm
     {
+        public CharsetTable EaccCharsetTable = null;
+        public Marc8Encoding Marc8Encoding = null;
+
         public void ReportError(string strTitle,
     string strError)
         {
@@ -1456,6 +1461,24 @@ MessageBoxDefaultButton.Button1);
 
             SetPrintLabelMode();
 
+            {
+                // MARC-8字符表
+                this.EaccCharsetTable = new CharsetTable();
+                try
+                {
+                    this.EaccCharsetTable.Attach(Path.Combine(this.DataDir, "eacc_charsettable"),
+                        Path.Combine(this.DataDir, "eacc_charsettable.index"));
+                    this.EaccCharsetTable.ReadOnly = true;  // 避免Close()的时候删除文件
+
+                    this.Marc8Encoding = new Marc8Encoding(this.EaccCharsetTable,
+                        Path.Combine(this.DataDir, "asciicodetables.xml"));
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "装载 EACC 码表文件时发生错误: " + ex.Message);
+                }
+            }
+
             // 设置窗口尺寸状态
             if (AppInfo != null)
             {
@@ -2310,6 +2333,12 @@ AppInfo.GetString("config",
                         // 获得 RFID 配置信息
                         // 2019/1/11
                         nRet = GetRfidInfo(false);
+                        if (nRet == -1)
+                            goto END1;
+
+                        // 获得条码校验规则
+                        // 2019/6/1
+                        nRet = GetBarcodeValidationInfo();
                         if (nRet == -1)
                             goto END1;
 
@@ -4881,6 +4910,90 @@ Culture=neutral, PublicKeyToken=null
             ERROR1:
             return 1;
         }
+
+        public int GetBarcodeValidationInfo()
+        {
+            REDO:
+            LibraryChannel channel = this.GetChannel();
+
+            string strError = "";
+
+            Stop.OnStop += new StopEventHandler(this.DoStop);
+            Stop.Initial("正在获得条码校验规则 ...");
+            Stop.BeginLoop();
+
+            try
+            {
+                this.BarcodeValidation = "";
+
+                long lRet = channel.GetSystemParameter(Stop,
+                    "circulation",
+                    "barcodeValidation",
+                    out string strValue,
+                    out strError);
+                if (lRet == -1)
+                {
+                    strError = "针对服务器 " + channel.Url + " 获得条码校验规则过程发生错误：" + strError;
+                    goto ERROR1;
+                }
+
+                int nRet = ManagerForm.AddRoot(strValue,
+"barcodeValidation",
+out string strXml,
+out strError);
+                if (nRet == -1)
+                {
+                    strError = "针对服务器 " + channel.Url + " 获得条码校验规则过程发生错误：" + strError;
+                    goto ERROR1;
+                }
+
+                this.BarcodeValidation = strXml;
+
+                // TODO: 是否验证一下 XML 的正确性、合法性
+#if NO
+                if (String.IsNullOrEmpty(strValue) == false)
+                {
+                    XmlDocument cfg_dom = new XmlDocument();
+                    try
+                    {
+                        cfg_dom.LoadXml(strValue);
+                    }
+                    catch (Exception ex)
+                    {
+                        strError = "服务器配置的前端交费接口XML装入DOM时出错: " + ex.Message;
+                        goto ERROR1;
+                    }
+                }
+#endif
+            }
+            finally
+            {
+                Stop.EndLoop();
+                Stop.OnStop -= new StopEventHandler(this.DoStop);
+                Stop.Initial("");
+
+                this.ReturnChannel(channel);
+            }
+
+            return 0;
+            ERROR1:
+            DialogResult result = (DialogResult)this.Invoke((Func<DialogResult>)(() =>
+            {
+                return MessageBox.Show(this,
+                strError + "\r\n\r\n是否重试?",
+                "dp2Circulation",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button1);
+            }));
+            if (result == System.Windows.Forms.DialogResult.Yes)
+                goto REDO;
+            if (result == DialogResult.No)
+                return 1;   // 出错，但希望继续后面的操作
+
+            return -1;  // 出错，不希望继续以后的操作
+        }
+
 
         // 
         // return:

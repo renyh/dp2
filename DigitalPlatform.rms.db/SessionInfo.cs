@@ -9,7 +9,7 @@ using System.IO;
 
 using DigitalPlatform.ResultSet;
 using DigitalPlatform.Text;
-using DigitalPlatform.Range;
+using DigitalPlatform.Core;
 
 namespace DigitalPlatform.rms
 {
@@ -1291,7 +1291,6 @@ out strError);
         // 关闭
         public void Close()
         {
-            string strError = "";
             int nRet = 0;
 
 #if NO
@@ -1319,7 +1318,7 @@ out strError);
             }
 #endif
 
-            nRet = this.CloseUser(out strError);
+            nRet = this.CloseUser(out string strError);
             if (nRet == -1)
             {
                 try
