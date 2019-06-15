@@ -660,7 +660,7 @@ this.comboBox_location.Text);
         protected override bool ProcessDialogKey(
 Keys keyData)
         {
-            if (keyData == Keys.Enter
+            if ((keyData == Keys.Enter || keyData == Keys.LineFeed)
                 && this.tabControl_query.SelectedTab == this.tabPage_logic)
             {
                 this.DoLogicSearch(false);
@@ -9518,6 +9518,8 @@ MessageBoxDefaultButton.Button1);
             if (dlg.DialogResult != DialogResult.OK)
                 return;
 
+            bool unimarc_modify_100 = dlg.UnimarcModify100;
+
             string strCatalogingRule = dlg.Rule;
             if (strCatalogingRule == "<无限制>")
                 strCatalogingRule = null;
@@ -9766,6 +9768,7 @@ MessageBoxDefaultButton.Button1);
                         strMARC,
                         strMarcSyntax,
                         targetEncoding,
+                        unimarc_modify_100 ? "unimarc_100" : "",
                         out baTarget,
                         out strError);
                     if (nRet == -1)

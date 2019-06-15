@@ -4556,6 +4556,7 @@ MessageBoxDefaultButton.Button1);
                 strMARC,
                 strMarcSyntax,
                 targetEncoding,
+                "", // 2019/6/13
                 out baTarget,
                 out strError);
             if (nRet == -1)
@@ -5231,7 +5232,7 @@ MessageBoxDefaultButton.Button1);
             Keys keyData)
         {
             // 回车
-            if (keyData == Keys.Enter)
+            if (keyData == Keys.Enter || keyData == Keys.LineFeed)
             {
                 if (this.queryControl1.Focused == true)
                 {

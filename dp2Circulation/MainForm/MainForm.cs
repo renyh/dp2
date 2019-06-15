@@ -4345,6 +4345,7 @@ Stack:
             {
                 // 回车
                 case Keys.Enter:
+                case Keys.LineFeed:
                     toolStripButton_loadBarcode_Click(sender, e);
                     break;
             }
@@ -4967,7 +4968,7 @@ Stack:
                     if (strBarcode == "?transform")
                         return validator.NeedValidate(strLibraryCode) == true ? 1 : 0;
 
-                    var result = validator.Validate(strLibraryCode, strBarcode);
+                    var result = validator.Transform(strLibraryCode, strBarcode);
                     if (result.OK == false)
                     {
                         strError = result.ErrorInfo;
@@ -7877,7 +7878,7 @@ Keys keyData)
             }
 #endif
 
-            if (keyData == Keys.Enter)
+            if (keyData == Keys.Enter || keyData == Keys.LineFeed)
             {
                 if (this.tabControl_panelFixed.SelectedTab == this.tabPage_accept
                     && this._acceptForm != null)
