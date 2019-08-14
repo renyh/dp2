@@ -37,5 +37,29 @@ QQ群:
 谢涛
 2015.5.7
 
+## 如何编译
 
+1) 应使用 Visual Studio 2017 或 2019
 
+2) 确保安装过 .NET Core SDK 2.6 以上版本
+
+下载地址：
+https://dotnet.microsoft.com/download/visual-studio-sdks
+
+3) dp2 Solution 中引用了一个名为 dp-library 的submodule。需要用 Git 命令行执行：
+
+git submodule init
+git submodule update
+
+以确保获得最新的 dp-library 代码。
+
+Git 命令执行以后，需要重新打开 dp2 Solution 变动才能生效
+
+4) 编译中若出现类似这样的报错：
+
+```
+13>C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\MSBuild\15.0\Bin\Microsoft.Common.CurrentVersion.targets(3214,5): warning MSB3327: 无法在当前用户的 Windows 证书存储中找到代码签名证书。若要更正此问题，请禁用 ClickOnce 清单的签名或将证书安装到证书存储中。
+13>C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\MSBuild\15.0\Bin\Microsoft.Common.CurrentVersion.targets(3214,5): error MSB3323: 在证书存储区中找不到清单签名证书。
+```
+
+需要将一些 .exe 的 Project (例如 dp2Catalog)的“签名”属性页中“为 ClickOnce 清单签名”这个 checkbox 清除选择。

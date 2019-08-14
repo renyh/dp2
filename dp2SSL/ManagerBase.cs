@@ -18,6 +18,9 @@ namespace dp2SSL
     // T: IFingerprint 或 IRfid
     public class ManagerBase<T>
     {
+        public TimeSpan ShortWaitTime = TimeSpan.FromMilliseconds(500);
+        public TimeSpan LongWaitTime = TimeSpan.FromMilliseconds(2000);
+
         event SetErrorEventHandler SetError = null;
 
         public void AddSetErrorEvent(SetErrorEventHandler handler)
@@ -83,6 +86,7 @@ namespace dp2SSL
 
         public delegate_action _new_action = null;
 
+        // TODO: 遇到 Server 连接失败情况，下次循环处理的等待时间要变长。也就是说只有 ListTags() API 成功情况下才能马上立即重新请求
         // 启动后台任务。
         // patameters:
         //      new_action  GetChannel() 遇到需要 new channel 时候调用的回调函数
@@ -98,11 +102,21 @@ namespace dp2SSL
 
             Task.Run(() =>
             {
+                TimeSpan wait_time = this.ShortWaitTime;
                 while (token.IsCancellationRequested == false)
                 {
                     // TODO: 中间进行配置的时候，确保暂停在这个位置
                     // 延时
-                    Task.Delay(TimeSpan.FromMilliseconds(1000), token);
+                    try
+                    {
+                        Task.Delay(// TimeSpan.FromMilliseconds(1000), 
+                            wait_time,
+                            token).Wait();
+                    }
+                    catch
+                    {
+                        return;
+                    }
 
                     // Loop?.Invoke(this, new EventArgs());
                     if (skip_func == null)
@@ -139,6 +153,7 @@ namespace dp2SSL
                             try
                             {
                                 loop_action(channel);
+                                wait_time = this.ShortWaitTime;
                             }
                             finally
                             {
@@ -148,6 +163,7 @@ namespace dp2SSL
                         catch (Exception ex)
                         {
                             error = true;
+                            wait_time = this.LongWaitTime;
                             SetError(ex,
                                 new SetErrorEventArgs
                                 {
@@ -203,7 +219,7 @@ namespace dp2SSL
                 catch (Exception ex)
                 {
                     if (ex is RemotingException && (uint)ex.HResult == 0x8013150b)
-                        throw new Exception($"启动 {this.Name} 通道时出错: “{this.Name}”({this.Url})没有响应", ex);
+                        throw new NotResponseException($"启动 {this.Name} 通道时出错: “{this.Name}”({this.Url})没有响应", ex);
                     else
                         throw new Exception($"启动 {this.Name} 通道时出错(2): {ex.Message}", ex);
                 }
@@ -278,6 +294,8 @@ namespace dp2SSL
                 channel.Channel = null;
             }
         }
+
+
     }
 
     public class BaseChannel<T>
@@ -297,6 +315,49 @@ namespace dp2SSL
         {
         }
 
+    }
+
+    public class NotResponseException : Exception
+    {
+        public static string GetErrorCode(Exception ex)
+        {
+            if (ex == null)
+                return "";
+            string error_code = ex.GetType().ToString();
+            if (NotResponseException.IsNotResponse(ex))
+                error_code = "notResponse";
+            return error_code;
+        }
+
+        public static bool IsNotResponse(Exception ex)
+        {
+            if (ex == null)
+                return false;
+
+            if (_isNotResponse(ex))
+                return true;
+            if (ex.InnerException != null && _isNotResponse(ex.InnerException))
+                return true;
+            return false;
+        }
+
+        static bool _isNotResponse(Exception ex)
+        {
+            if (ex is NotResponseException)
+                return true;
+
+            return (ex is RemotingException && (uint)ex.HResult == 0x8013150b);
+        }
+
+        public NotResponseException(string s)
+            : base(s)
+        {
+        }
+
+        public NotResponseException(string s, Exception inner)
+    : base(s, inner)
+        {
+        }
     }
 
 }

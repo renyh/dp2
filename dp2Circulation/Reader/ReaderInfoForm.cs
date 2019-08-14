@@ -11,6 +11,7 @@ using System.Runtime.Remoting.Channels;
 using System.Runtime.Remoting.Channels.Ipc;
 using System.Web;
 using System.Threading.Tasks;
+using System.Drawing.Imaging;
 
 using ZXing;
 using ZXing.QrCode;
@@ -23,7 +24,6 @@ using DigitalPlatform.Text;
 using DigitalPlatform.IO;
 using DigitalPlatform.Drawing;
 using DigitalPlatform.Interfaces;
-using System.Drawing.Imaging;
 
 using DigitalPlatform.CommonControl;
 using DigitalPlatform.Script;
@@ -2126,12 +2126,22 @@ strSavedXml);
                     }
                 }
 
-                // TODO: 也要考虑想办法通知人脸中心获取最新变化信息
+                List<string> warnings = new List<string>();
+
+                // 通知人脸中心获取最新变化信息
+                // TODO: 对比新旧记录，如果 face 元素变化了，或者册条码号变化了，才请求立即人脸缓存
+                if (string.IsNullOrEmpty(Program.MainForm.FaceReaderUrl) == false
+    && string.IsNullOrEmpty(this.readerEditControl1.Barcode) == false)
+                {
+                    var result = FaceNotifyTask("faceChanged").Result;
+                    if (result.Value == -1)
+                        warnings.Add(result.ErrorInfo);
+                }
 
                 // TODO: 对比新旧记录，如果指纹信息变化了，或者册条码号变化了，才请求立即刷新指纹缓存
                 // 更新指纹高速缓存
                 if (string.IsNullOrEmpty(Program.MainForm.FingerprintReaderUrl) == false
-                    && string.IsNullOrEmpty(this.readerEditControl1.Barcode) == false)
+                && string.IsNullOrEmpty(this.readerEditControl1.Barcode) == false)
                 {
                     // return:
                     //      -2  remoting服务器连接失败。驱动程序尚未启动
@@ -2143,12 +2153,18 @@ strSavedXml);
                          out strError);
                     if (nRet == -1)
                     {
-                        strError = "虽然读者记录已经保存成功，但更新指纹缓存时发生了错误: " + strError;
-                        goto ERROR1;
+                        // strError = "虽然读者记录已经保存成功，但更新指纹缓存时发生了错误: " + strError;
+                        // goto ERROR1;
+                        warnings.Add(strError);
                     }
                     // -2 故意不报错。因为用户可能配置了URL，但是当前驱动程序并没有启动
                 }
 
+                if (warnings.Count > 0)
+                {
+                    string warning = $"虽然读者记录已经保存成功，但通知人脸中心和指纹中心刷新时发生了错误: {StringUtil.MakePathList(warnings, "; ")}";
+                    this.ShowMessage(warning, "yellow", true);
+                }
             }
             finally
             {
@@ -2274,6 +2290,9 @@ strSavedXml);
             DomUtil.DeleteElement(dom.DocumentElement, "foregift");
             // DomUtil.DeleteElement(dom.DocumentElement, "personalLibrary");
             DomUtil.DeleteElement(dom.DocumentElement, "friends");
+
+            // 2019/8/1
+            DomUtil.DeleteElement(dom.DocumentElement, "face");
 
 #if NO
             // 清除<dprms:file>元素
@@ -3863,6 +3882,7 @@ MessageBoxDefaultButton.Button2);
             SaveReaderToTemplate();
         }
 
+        // *** 此函数已经废止
         // (从剪贴板)粘贴证件照(1)
         private void toolStripButton_pasteCardPhoto_Click(object sender, EventArgs e)
         {
@@ -4664,10 +4684,9 @@ MessageBoxDefaultButton.Button1);
 
                     if (image != null)
                     {
-                        string strShrinkComment = "";
                         nRet = SetCardPhoto(image,
                     "cardphoto",
-        out strShrinkComment,
+        out string strShrinkComment,
         out strError);
                         if (nRet == -1)
                             return -1;
@@ -5243,44 +5262,25 @@ MessageBoxDefaultButton.Button2);
         private async void toolStripButton_registerFingerprint_Click(object sender, EventArgs e)
         {
             string strError = "";
-            //string strFingerprint = "";
-            //string strVersion = "";
 
-#if NO
-            stop.OnStop += new StopEventHandler(this.DoStop);
-            stop.Initial("等待扫描指纹 ...");
-            stop.BeginLoop();
-#endif
             this.ShowMessage("等待扫描指纹 ...");
             this.EnableControls(false);
             // Program.MainForm.StatusBarMessage = "等待扫描指纹...";
             try
             {
-                REDO:
-#if NO
-                // return:
-                //      -1  error
-                //      0   放弃输入
-                //      1   成功输入
-                int nRet = ReadFingerprintString(
-                    out strFingerprint,
-                    out strVersion,
-                    out strError);
-                if (nRet == -1)
+                NormalResult getstate_result = await FingerprintGetState("getLibraryServerUID");
+                if (getstate_result.Value == -1)
                 {
-                    DialogResult temp_result = MessageBox.Show(this,
-strError + "\r\n\r\n是否重试?",
-"ReaderInfoForm",
-MessageBoxButtons.RetryCancel,
-MessageBoxIcon.Question,
-MessageBoxDefaultButton.Button1);
-                    if (temp_result == DialogResult.Retry)
-                        goto REDO;
+                    strError = getstate_result.ErrorInfo;
+                    goto ERROR1;
+                }
+                else if (getstate_result.ErrorCode != Program.MainForm.ServerUID)
+                {
+                    strError = $"指纹中心所连接的 dp2library 服务器 UID {getstate_result.ErrorCode} 和内务当前所连接的 UID {Program.MainForm.ServerUID} 不同。无法进行指纹登记";
+                    goto ERROR1;
                 }
 
-                if (nRet == -1 || nRet == 0)
-                    goto ERROR1;
-#endif
+                REDO:
                 GetFingerprintStringResult result = await ReadFingerprintString(this.readerEditControl1.Barcode);
                 if (result.Value == -1)
                 {
@@ -5313,14 +5313,6 @@ MessageBoxDefaultButton.Button1);
             {
                 this.EnableControls(true);
                 this.ClearMessage();
-#if NO
-                if (stop != null)
-                {
-                    stop.EndLoop();
-                    stop.OnStop -= new StopEventHandler(this.DoStop);
-                    stop.Initial("");
-                }
-#endif
             }
 
             // MessageBox.Show(this, strFingerprint);
@@ -6364,7 +6356,7 @@ MessageBoxDefaultButton.Button1);
                 GetFeatureStringResult result = await ReadFeatureString(
                     null,
                     this.readerEditControl1.Barcode,
-                    "confirmPicture,returnImage");
+                    "ui,confirmPicture,returnImage");
                 if (result.Value == -1)
                 {
                     DialogResult temp_result = MessageBox.Show(this,
@@ -6387,6 +6379,7 @@ MessageBoxDefaultButton.Button1);
                 this.readerEditControl1.FaceFeatureVersion = result.Version;
                 this.readerEditControl1.Changed = true;
 
+                // TODO: 如果尺寸符合要求，则直接用返回的 jpeg 上载
                 // 设置人脸照片对象
                 using (Image image = FromBytes(result.ImageData))
                 using (Image image1 = new Bitmap(image))
@@ -6394,8 +6387,8 @@ MessageBoxDefaultButton.Button1);
                     // 自动缩小图像
                     int nRet = SetCardPhoto(image1,
                         "face",
-                    out string strShrinkComment,
-                    out strError);
+                        out string strShrinkComment,
+                        out strError);
                     if (nRet == -1)
                         goto ERROR1;
                 }
@@ -6408,6 +6401,7 @@ MessageBoxDefaultButton.Button1);
 
             // MessageBox.Show(this, strFingerprint);
             Program.MainForm.StatusBarMessage = "人脸信息获取成功";
+            // TODO: 记住保存记录时通知 facecenter DoReplication
             return;
             ERROR1:
             Program.MainForm.StatusBarMessage = strError;
@@ -6422,7 +6416,7 @@ MessageBoxDefaultButton.Button1);
             }
         }
 
-        // (从剪贴板)粘贴证件照
+        // (从剪贴板)粘贴证件照(注意证件照是用途为 cardphoto 的对象，和人脸识别无关)
         private void ToolStripMenuItem_pasteCardPhoto_Click(object sender, EventArgs e)
         {
             string strError = "";
@@ -6432,6 +6426,8 @@ MessageBoxDefaultButton.Button1);
             List<Image> images = ImageUtil.GetImagesFromClipboard(out strError);
             if (images == null)
             {
+                if (string.IsNullOrEmpty(strError) == true)
+                    strError = "当前剪贴板为空";
                 strError = $"{strError}。无法创建证件照片";
                 goto ERROR1;
             }
@@ -6484,12 +6480,21 @@ MessageBoxDefaultButton.Button1);
             this.readerEditControl1.CardNumber = dlg.Numbers;
         }
 
-        // 清除人脸特征
+        // 清除人脸特征和图片
         private void toolStripMenuItem_clearFaceFeature_Click(object sender, EventArgs e)
         {
             this.readerEditControl1.FaceFeatureVersion = "";
             this.readerEditControl1.FaceFeature = "";
             this.readerEditControl1.Changed = true;
+
+            // 标记删除 usage 为 "face" 的对象
+            List<ListViewItem> items = this.binaryResControl1.FindItemByUsage("face");
+            if (items.Count > 0)
+                this.binaryResControl1.MaskDelete(items);
+
+            // TODO: 注意保存记录的时候通知 facecenter 及时同步刷新信息
+            // 可能需要建立一种标志，表示人脸相关信息修改过
+            MessageBox.Show(this, "人脸特征信息和图片已经清除。但读者记录尚未保存");
         }
 
         // 一般保存

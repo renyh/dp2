@@ -9,6 +9,7 @@ using Jint;
 using Jint.Native;
 
 using DigitalPlatform.Text;
+using System.Text.RegularExpressions;
 
 namespace DigitalPlatform.LibraryServer.Common
 {
@@ -24,18 +25,73 @@ namespace DigitalPlatform.LibraryServer.Common
             _dom.LoadXml(definition);
         }
 
+        // 选择 根下 的 validator 元素，符合 location 的那些
+        // location 字符串的格式如下：location1,location2,location3
+        //      可能会包含 馆代码；具体的馆藏地字符串(例如 '西城分馆/阅览室')；或者模式匹配的馆藏地字符串(例如 '西城分馆/社科*')
+        List<XmlElement> GetValidators(string location)
+        {
+            var error = VerifyOne(location);
+            if (string.IsNullOrEmpty(error) == false)
+                throw new ArgumentException(error);
+            XmlNodeList nodes = _dom.DocumentElement.SelectNodes("validator");
+            if (nodes.Count == 0)
+                return new List<XmlElement>();
+            foreach(XmlElement validator in nodes)
+            {
+                string current = validator.GetAttribute("location");
+                if (Match(location, current))
+                    return new List<XmlElement>{ validator };
+            }
+            return new List<XmlElement>();
+        }
+
+        static string VerifyOne(string one)
+        {
+            if (one.IndexOfAny(new char[] { ',', '*', '?' }) != -1)
+                return $"字符串 '{one}' 中不应包含 ,*? 这些字符";
+            return null;
+        }
+
+        static bool Match(string one, string pattern)
+        {
+            if (one == pattern)
+                return true;
+            string[] list = pattern.Split(new char[] { ',' });
+            foreach(string p in list)
+            {
+                if (one == p)
+                    return true;
+
+                if (Regex.IsMatch(one, WildCardToRegular(p)))
+                    return true;
+            }
+            return false;
+        }
+
+        // https://stackoverflow.com/questions/30299671/matching-strings-with-wildcard
+        // If you want to implement both "*" and "?"
+        private static String WildCardToRegular(String value)
+        {
+            return "^" + Regex.Escape(value).Replace("\\?", ".").Replace("\\*", ".*") + "$";
+        }
+
         // 判断一个馆藏地是否需要进行条码变换
         // exception:
         //      可能会抛出异常
-        public bool NeedValidate(string location)
+        public bool NeedTransform(string location)
         {
-            XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            // XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            var nodes = GetValidators(location);
             if (nodes.Count == 0)
                 return false;
             if (nodes.Count > 1)
                 throw new Exception($"馆藏地 '{location}' 定义验证规则太多 ({nodes.Count})");
 
             XmlElement validator = nodes[0] as XmlElement;
+
+            // 2019/7/30
+            if (validator.GetAttributeNode("suppress") != null)
+                return false;
 
             // validator 元素下的 transform 元素
             if (validator.SelectSingleNode("transform") is XmlElement transform)
@@ -55,7 +111,8 @@ namespace DigitalPlatform.LibraryServer.Common
         public ValidateResult Validate(string location,
     string barcode)
         {
-            XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            // XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            var nodes = GetValidators(location);
             if (nodes.Count == 0)
                 return new ValidateResult
                 {
@@ -71,9 +128,22 @@ namespace DigitalPlatform.LibraryServer.Common
                     ErrorCode = "locationDefMoreThanOne"
                 };
 
-            ValidateResult result = null;
+            // ValidateResult result = null;
 
             XmlElement validator = nodes[0] as XmlElement;
+
+            if (validator.GetAttributeNode("suppress") != null)
+            {
+                string comment = validator.GetAttribute("suppress");
+                if (string.IsNullOrEmpty(comment))
+                    comment = $"馆藏地 '{location}' 不打算定义验证规则";
+                return new ValidateResult
+                {
+                    OK = false,
+                    ErrorInfo = comment,
+                    ErrorCode = "suppressed"    // 不打算定义验证规则
+                };
+            }
 
 #if NO
             // validator 元素下的 transform 元素
@@ -107,7 +177,8 @@ namespace DigitalPlatform.LibraryServer.Common
         public TransformResult Transform(string location,
     string barcode)
         {
-            XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            // XmlNodeList nodes = _dom.DocumentElement.SelectNodes($"validator[@location='{location}']");
+            var nodes = GetValidators(location);
             if (nodes.Count == 0)
                 return new TransformResult
                 {
@@ -128,9 +199,25 @@ namespace DigitalPlatform.LibraryServer.Common
 
             XmlElement validator = nodes[0] as XmlElement;
 
+            if (validator.GetAttributeNode("suppress") != null)
+            {
+                string comment = validator.GetAttribute("suppress");
+                if (string.IsNullOrEmpty(comment))
+                    comment = $"馆藏地 '{location}' 不打算定义验证规则";
+                return new TransformResult
+                {
+                    OK = false,
+                    ErrorInfo = comment,
+                    ErrorCode = "suppressed"    // 不打算定义验证规则
+                };
+            }
+
             // validator 元素下的 transform 元素
             XmlElement transform = validator.SelectSingleNode("transform") as XmlElement;
             string transform_script = transform?.InnerText.Trim();
+
+            // 校验所匹配上的类型
+            string verify_type = null;
 
             XmlNodeList patron_or_entitys = validator.SelectNodes("patron | entity");
             foreach (XmlElement patron_or_entity in patron_or_entitys)
@@ -145,6 +232,20 @@ namespace DigitalPlatform.LibraryServer.Common
                         OK = true,
                         Type = patron_or_entity.Name,
                     };
+                    verify_type = patron_or_entity.Name;
+                    break;
+                }
+
+                // 按照 verify 算法来再匹配一次。
+                // patron 元素里面，只要命中过一个 range 元素，哪怕是没有 transform 属性的 range 元素，
+                // 后面也就不再尝试匹配 entity 元素了
+                // entity 元素亦然。
+                ret = ProcessEntry(patron_or_entity,
+    barcode);
+                if (ret == true)
+                {
+                    verify_type = patron_or_entity.Name;
+                    // transform = null;   // 迫使后面也不使用 transform 元素
                     break;
                 }
             }
@@ -154,6 +255,7 @@ namespace DigitalPlatform.LibraryServer.Common
                 result = new TransformResult
                 {
                     OK = true,
+                    Type = verify_type,
                     TransformedBarcode = null,
                     Transformed = false,
                     ErrorInfo = $"号码 '{barcode}' (馆藏地属于 '{location}') 没有发生变换",
@@ -186,6 +288,7 @@ namespace DigitalPlatform.LibraryServer.Common
         transform_script);
                         if (result == null)
                             result = new TransformResult();
+                        result.Type = verify_type;
                         result.TransformedBarcode = transform_result;
                         result.Transformed = true;
                         result.OK = true;
@@ -424,6 +527,7 @@ namespace DigitalPlatform.LibraryServer.Common
                 }
             }
 
+            transform_script = "";
             return false;
         }
 

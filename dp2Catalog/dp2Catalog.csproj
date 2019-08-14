@@ -13,7 +13,7 @@
     <IsWebBootstrapper>true</IsWebBootstrapper>
     <ManifestCertificateThumbprint>80AE8886E9220471869958BEFAF13962C3FA0319</ManifestCertificateThumbprint>
     <ManifestKeyFile>代码签名证书-2019.pfx</ManifestKeyFile>
-    <GenerateManifests>false</GenerateManifests>
+    <GenerateManifests>true</GenerateManifests>
     <SignManifests>true</SignManifests>
     <SccProjectName>
     </SccProjectName>
@@ -52,7 +52,7 @@
     <SuiteName>dp2 V3</SuiteName>
     <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>14</ApplicationRevision>
+    <ApplicationRevision>15</ApplicationRevision>
     <ApplicationVersion>3.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -422,6 +422,7 @@
     <Content Include="default_zserver.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="SRU\memo.txt" />
     <Content Include="zserver.xml" />
     <EmbeddedResource Include="AdvertiseForm.resx">
       <DependentUpon>AdvertiseForm.cs</DependentUpon>
@@ -527,6 +528,9 @@
     <EmbeddedResource Include="SelectProtocolDialog.resx">
       <SubType>Designer</SubType>
       <DependentUpon>SelectProtocolDialog.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="SRU\SruSearchForm.resx">
+      <DependentUpon>SruSearchForm.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="SystemCfgForm.resx">
       <SubType>Designer</SubType>
@@ -667,6 +671,16 @@
     </Compile>
     <Compile Include="SelectProtocolDialog.Designer.cs">
       <DependentUpon>SelectProtocolDialog.cs</DependentUpon>
+    </Compile>
+    <Compile Include="SRU\SruConfig.cs" />
+    <Compile Include="SRU\SruSearchForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="SRU\SruSearchForm.Designer.cs">
+      <DependentUpon>SruSearchForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="SRU\WebClientEx.cs">
+      <SubType>Component</SubType>
     </Compile>
     <Compile Include="SystemCfgForm.cs">
       <SubType>Form</SubType>

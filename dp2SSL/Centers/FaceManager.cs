@@ -103,7 +103,9 @@ namespace dp2SSL
                 Base.TriggerSetError(ex,
                     new SetErrorEventArgs
                     {
-                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                        Error = NotResponseException.IsNotResponse(ex)
+                        ? $"人脸中心({Base.Url})没有响应"
+                        : $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
                     });
                 return new NormalResult { Value = -1, ErrorInfo = ex.Message };
             }
@@ -143,11 +145,16 @@ namespace dp2SSL
                     {
                         Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
                     });
-                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = ex.Message,
+                    ErrorCode = NotResponseException.GetErrorCode(ex)
+                };
             }
         }
 
-        public static RecognitionFaceResult RecognitionFace(string style)
+        public static RecognitionFaceResult RecognitionFace(string style, bool setGlobalError = false)
         {
             try
             {
@@ -158,6 +165,47 @@ namespace dp2SSL
                 try
                 {
                     var result = channel.Object.RecognitionFace(style);
+                    if (setGlobalError)
+                    {
+                        if (result.Value == -1)
+                            Base.TriggerSetError(result,
+                                new SetErrorEventArgs { Error = result.ErrorInfo });
+                        else
+                            Base.TriggerSetError(result,
+                                new SetErrorEventArgs { Error = null }); // 清除以前的报错
+                    }
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                if (setGlobalError)
+                    Base.TriggerSetError(ex,
+                        new SetErrorEventArgs
+                        {
+                            Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                        });
+                return new RecognitionFaceResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static GetImageResult GetImage(string style)
+        {
+            try
+            {
+                //if (string.IsNullOrEmpty(Base.Url))
+                //    return new RecognitionFaceResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.GetImage(style);
+                    // TODO: 是否可以考虑不显示错误信息
                     if (result.Value == -1)
                         Base.TriggerSetError(result,
                             new SetErrorEventArgs { Error = result.ErrorInfo });
@@ -180,7 +228,163 @@ namespace dp2SSL
                     {
                         Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
                     });
-                return new RecognitionFaceResult { Value = -1, ErrorInfo = ex.Message };
+                return new GetImageResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static NormalResult CancelRecognitionFace()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(Base.Url))
+                    return new NormalResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.CancelRecognitionFace();
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static GetFeatureStringResult GetFeatureString(byte[] imageData,
+            string strExcludeBarcodes,
+            string strStyle,
+            bool setGlobalError = false)
+        {
+            try
+            {
+                //if (string.IsNullOrEmpty(Base.Url))
+                //    return new GetFeatureStringResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.GetFeatureString(imageData,
+                        strExcludeBarcodes,
+                        strStyle);
+                    if (setGlobalError)
+                    {
+                        if (result.Value == -1)
+                            Base.TriggerSetError(result,
+                                new SetErrorEventArgs { Error = result.ErrorInfo });
+                        else
+                            Base.TriggerSetError(result,
+                                new SetErrorEventArgs { Error = null }); // 清除以前的报错
+                    }
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                if (setGlobalError)
+                    Base.TriggerSetError(ex,
+                        new SetErrorEventArgs
+                        {
+                            Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                        });
+                return new GetFeatureStringResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static NormalResult CancelGetFeatureString()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(Base.Url))
+                    return new NormalResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.CancelGetFeatureString();
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
+            }
+        }
+
+        public static NormalResult Notify(string event_name)
+        {
+            try
+            {
+                //if (string.IsNullOrEmpty(Base.Url))
+                //    return new NormalResult();
+
+                BaseChannel<IBioRecognition> channel = Base.GetChannel();
+                try
+                {
+                    var result = channel.Object.Notify(event_name);
+                    if (result.Value == -1)
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = result.ErrorInfo });
+                    else
+                        Base.TriggerSetError(result,
+                            new SetErrorEventArgs { Error = null }); // 清除以前的报错
+
+                    return result;
+                }
+                finally
+                {
+                    Base.ReturnChannel(channel);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Base.TriggerSetError(ex,
+                    new SetErrorEventArgs
+                    {
+                        Error = $"人脸中心出现异常: {ExceptionUtil.GetAutoText(ex)}"
+                    });
+                return new NormalResult { Value = -1, ErrorInfo = ex.Message };
             }
         }
 

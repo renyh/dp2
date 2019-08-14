@@ -217,7 +217,8 @@ namespace FingerprintCenter
             out string strCfgInfo,
             out string strError)
         {
-            strVersion = "2.0";
+            // strVersion = "2.0";
+            strVersion = ClientInfo.ClientVersion;
             strCfgInfo = "selfInitCache";
             strError = "";
             return 0;
@@ -369,7 +370,8 @@ Exception rethrown at [0]:
             out string strError)
         {
             return Program.FingerPrint.AddItems(items,
-    out strError);
+                null,
+                out strError);
         }
 
         public int CancelGetFingerprintString()
@@ -504,6 +506,20 @@ Exception rethrown at [0]:
 
         public NormalResult GetState(string style)
         {
+            if (style == "restart")
+            {
+                Program.MainForm.Restart();
+                return new NormalResult();
+            }
+
+            // 获得当前 fingerprintcenter 所连接的 dp2library 服务器的 UID
+            if (style == "getLibraryServerUID")
+                return new NormalResult
+                {
+                    Value = 0,
+                    ErrorCode = Program.MainForm.ServerUID,
+                };
+
             if (ClientInfo.ErrorState == "normal")
                 return new NormalResult
                 {

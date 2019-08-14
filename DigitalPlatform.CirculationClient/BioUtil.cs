@@ -89,11 +89,15 @@ namespace DigitalPlatform.CirculationClient
         {
             public string LastDate { get; set; }
             public long LastIndex { get; set; }
+
+            // [out] 返回处理概述信息
+            public ProcessInfo ProcessInfo { get; set; }
         }
 
         public virtual int AddItems(
-    List<FingerprintItem> items,
-    out string strError)
+            List<FingerprintItem> items,
+            ProcessInfo info,
+            out string strError)
         {
             strError = "尚未重载 AddItems() 函数";
             return -1;
@@ -182,6 +186,7 @@ namespace DigitalPlatform.CirculationClient
             long last_index = -1;    // -1 表示尚未处理
 
             // bool bUserChanged = false;
+            ProcessInfo info = new ProcessInfo();
 
             // strStartDate 里面可能会包含 ":1-100" 这样的附加成分
             StringUtil.ParseTwoPart(strStartDate,
@@ -201,11 +206,10 @@ namespace DigitalPlatform.CirculationClient
 
             try
             {
-                List<string> dates = null;
                 int nRet = OperLogLoader.MakeLogFileNames(strStartDate,
                     strEndDate,
                     true,  // 是否包含扩展名 ".log"
-                    out dates,
+                    out List<string> dates,
                     out string strWarning,
                     out string strError);
                 if (nRet == -1)
@@ -236,7 +240,7 @@ namespace DigitalPlatform.CirculationClient
                                      // loader.owner = this;
                         Estimate = estimate,
                         Dates = dates,
-                        Level = 2,  // Program.MainForm.OperLogLevel;
+                        Level = 0,  // 2019/7/23 注：2 最简略。不知何故以前用了这个级别。缺点是 oldRecord 元素缺乏 InnerText
                         AutoCache = false,
                         CacheDir = "",
                         LogType = logType,
@@ -299,6 +303,7 @@ namespace DigitalPlatform.CirculationClient
                             {
                                 nRet = TraceSetReaderInfo(
                                     dom,
+                                    info,
                                     out strError);
                             }
                             else
@@ -354,20 +359,42 @@ namespace DigitalPlatform.CirculationClient
                 {
                     Value = last_index == -1 ? 0 : 1,
                     LastDate = strLastDate,
-                    LastIndex = last_index
+                    LastIndex = last_index,
+                    ProcessInfo = info
                 };
             }
             catch (ChannelException ex)
             {
-                return new ReplicationResult { Value = -1, ErrorInfo = ex.Message };
+                return new ReplicationResult
+                {
+                    Value = -1,
+                    ErrorInfo = ex.Message,
+                    ProcessInfo = info
+                };
+            }
+            catch (InterruptException ex)
+            {
+                // 2019/7/4
+                return new ReplicationResult
+                {
+                    Value = -1,
+                    ErrorInfo = ex.Message,
+                    ProcessInfo = info
+                };
             }
             catch (Exception ex)
             {
                 string strError = "ReportForm DoReplication() exception: " + ExceptionUtil.GetDebugText(ex);
-                return new ReplicationResult { Value = -1, ErrorInfo = strError };
+                return new ReplicationResult
+                {
+                    Value = -1,
+                    ErrorInfo = strError,
+                    ProcessInfo = info
+                };
             }
         }
 
+        // TODO: 考虑有一种机制可以让 fingerprintcenter 或者 facecenter 的操作历史中能显示出变化情况，至少是缓存事项的数量变化
         // SetReaderInfo() API 恢复动作
         /*
 <root>
@@ -385,6 +412,7 @@ namespace DigitalPlatform.CirculationClient
          * */
         int TraceSetReaderInfo(
             XmlDocument domLog,
+            ProcessInfo info,
             out string strError)
         {
             strError = "";
@@ -407,22 +435,26 @@ namespace DigitalPlatform.CirculationClient
 
                 string strOldRecord = "";
                 string strOldRecPath = "";
-                if (strAction == "move")
+                // if (strAction == "move")
                 {
                     strOldRecord = DomUtil.GetElementText(domLog.DocumentElement,
                         "oldRecord",
                         out node);
+                    /*
                     if (node == null)
                     {
                         strError = "日志记录中缺<oldRecord>元素";
                         return -1;
-                    }
+                    }*/
 
-                    strOldRecPath = DomUtil.GetAttr(node, "recPath");
-                    if (string.IsNullOrEmpty(strOldRecPath) == true)
+                    if (node != null)
                     {
-                        strError = "日志记录中<oldRecord>元素内缺recPath属性值";
-                        return -1;
+                        strOldRecPath = DomUtil.GetAttr(node, "recPath");
+                        if (string.IsNullOrEmpty(strOldRecPath) == true)
+                        {
+                            strError = "日志记录中<oldRecord>元素内缺recPath属性值";
+                            return -1;
+                        }
                     }
 
                     // 如果移动过程中没有修改，则要用旧的记录内容写入目标
@@ -430,15 +462,26 @@ namespace DigitalPlatform.CirculationClient
                         strRecord = strOldRecord;
                 }
 
+                // TODO: change 动作也可能删除 face 元素
+
+                /*
                 // 删除旧记录对应的指纹缓存
                 if (strAction == "move"
                     && string.IsNullOrEmpty(strOldRecord) == false)
                 {
-                    if (DeleteFingerPrint(strOldRecord, out strError) == -1)
+                    if (DeleteFingerPrint(strOldRecord, info, out strError) == -1)
                         return -1;
                 }
+                */
 
-                if (AddFingerPrint(strRecord, out strError) == -1)
+                /*
+                if (AddFingerPrint(strRecord, info, out strError) == -1)
+                    return -1;
+                    */
+                if (ModifyFingerPrint(strOldRecord,
+                    strRecord,
+                    info,
+                    out strError) == -1)
                     return -1;
             }
             else if (strAction == "delete")
@@ -453,11 +496,18 @@ namespace DigitalPlatform.CirculationClient
                 }
                 string strRecPath = DomUtil.GetAttr(node, "recPath");
 
+                /*
                 if (string.IsNullOrEmpty(strOldRecord) == false)
                 {
-                    if (DeleteFingerPrint(strOldRecord, out strError) == -1)
+                    if (DeleteFingerPrint(strOldRecord, info, out strError) == -1)
                         return -1;
                 }
+                */
+                if (ModifyFingerPrint(strOldRecord,
+    "<root />",
+    info,
+    out strError) == -1)
+                    return -1;
             }
             else
             {
@@ -468,10 +518,140 @@ namespace DigitalPlatform.CirculationClient
             return 0;
         }
 
+        // 修改指纹缓存，或者删除指纹缓存
+        int ModifyFingerPrint(
+            string strOldRecord,
+            string strNewRecord,
+            ProcessInfo info,
+            out string strError)
+        {
+            strError = "";
 
+            XmlDocument old_dom = new XmlDocument();
+            try
+            {
+                if (string.IsNullOrEmpty(strOldRecord))
+                    old_dom.LoadXml("<root />");
+                else
+                    old_dom.LoadXml(strOldRecord);
+            }
+            catch (Exception ex)
+            {
+                strError = $"strOldRecord 装载到 XmlDocument 时出现异常: {ex.Message}";
+                return -1;
+            }
 
-        // 写入新记录的指纹缓存
+            XmlDocument new_dom = new XmlDocument();
+            try
+            {
+                if (string.IsNullOrEmpty(strNewRecord))
+                    new_dom.LoadXml("<root />");
+                else
+                    new_dom.LoadXml(strNewRecord);
+            }
+            catch (Exception ex)
+            {
+                strError = $"strNewRecord 装载到 XmlDocument 时出现异常: {ex.Message}";
+                return -1;
+            }
+
+            string strOldReaderBarcode = GetReaderBarcode(old_dom);
+            string strOldFingerPrintString = DomUtil.GetElementText(old_dom.DocumentElement,
+                this.ElementName);
+
+            string strNewReaderBarcode = GetReaderBarcode(new_dom);
+            //if (string.IsNullOrEmpty(strNewReaderBarcode))
+            //    return 0;
+            string strNewFingerPrintString = DomUtil.GetElementText(new_dom.DocumentElement,
+                this.ElementName);
+
+            // *** 看新旧记录之间 fingerprint 之间的差异。有差异才需要覆盖进入高速缓存
+
+            // 证条码号没有发生变化的情况
+            if (strOldReaderBarcode == strNewReaderBarcode)
+            {
+                if (strOldFingerPrintString == strNewFingerPrintString)
+                    return 0;   // 指纹特征没有发生变化
+
+                if (string.IsNullOrEmpty(strOldReaderBarcode))
+                    return 0;   // 空条码号忽视处理
+
+                FingerprintItem item = new FingerprintItem
+                {
+                    FingerprintString = strNewFingerPrintString,
+                    ReaderBarcode = strNewReaderBarcode
+                };
+
+                // return:
+                //      0   成功
+                //      其他  失败。错误码
+                int nRet = AddItems(
+                    new List<FingerprintItem> { item },
+                    info,
+                    out strError);
+                if (nRet != 0)
+                    return -1;
+
+                return 1;
+            }
+
+            // 证条码号发生了变化的情况。两步处理
+
+            // 1) 删除旧的
+            ProcessInfo info1 = new ProcessInfo();
+
+            if (string.IsNullOrEmpty(strOldReaderBarcode) == false)
+            {
+                FingerprintItem item = new FingerprintItem
+                {
+                    FingerprintString = "",
+                    ReaderBarcode = strOldReaderBarcode
+                };
+                // return:
+                //      0   成功
+                //      其他  失败。错误码
+                int nRet = AddItems(
+                    new List<FingerprintItem> { item },
+                    info1,
+                    out strError);
+                if (nRet != 0)
+                    return -1;
+            }
+
+            // 2) 增加新的
+            ProcessInfo info2 = new ProcessInfo();
+
+            if (string.IsNullOrEmpty(strNewReaderBarcode) == false)
+            {
+                FingerprintItem item = new FingerprintItem
+                {
+                    FingerprintString = strNewFingerPrintString,
+                    ReaderBarcode = strNewReaderBarcode
+                };
+                // return:
+                //      0   成功
+                //      其他  失败。错误码
+                int nRet = AddItems(
+                    new List<FingerprintItem> { item },
+                    info2,
+                    out strError);
+                if (nRet != 0)
+                    return -1;
+            }
+
+            if (info != null)
+            {
+                info.ChangeCount += info1.ChangeCount + info2.ChangeCount;
+                info.DeleteCount += info1.DeleteCount + info2.DeleteCount;
+                info.NewCount += info1.NewCount + info2.NewCount;
+            }
+            return 1;
+        }
+
+#if NO
+        // 写入新记录的指纹缓存，或者删除指纹缓存
         int AddFingerPrint(string strRecord,
+            ProcessInfo info,
             out string strError)
         {
             strError = "";
@@ -496,6 +676,7 @@ namespace DigitalPlatform.CirculationClient
             //      其他  失败。错误码
             int nRet = AddItems(
                 new List<FingerprintItem> { item },
+                info,
                 out strError);
             if (nRet != 0)
                 return -1;
@@ -503,7 +684,11 @@ namespace DigitalPlatform.CirculationClient
             return 1;
         }
 
+#endif
+
+#if NO
         int DeleteFingerPrint(string strOldRecord,
+            ProcessInfo info,
             out string strError)
         {
             strError = "";
@@ -523,13 +708,15 @@ namespace DigitalPlatform.CirculationClient
                 //      其他  失败。错误码
                 int nRet = AddItems(
                     new List<FingerprintItem> { item },
+                    info,
                     out strError);
                 if (nRet != 0)
                     return -1;
             }
-
             return 0;
         }
+
+#endif
 
         static string GetReaderBarcode(XmlDocument dom)
         {
@@ -596,7 +783,7 @@ namespace DigitalPlatform.CirculationClient
                 // return:
                 //      -1  出错
                 //      >=0 实际发送给接口程序的事项数目
-                int nRet = CreateFingerprintCache(null,
+                int nRet = CreateFingerprintCache(null, null,
                     out strError);
                 if (nRet == -1 || nRet == -2)
                     return new NormalResult { Value = nRet, ErrorInfo = strError };
@@ -675,6 +862,7 @@ namespace DigitalPlatform.CirculationClient
         //      -1  出错
         //      >=0 实际发送给接口程序的事项数目
         int CreateFingerprintCache(DpResultSet resultset,
+            ProcessInfo info,
             out string strError)
         {
             strError = "";
@@ -691,6 +879,7 @@ namespace DigitalPlatform.CirculationClient
                     //      0   成功
                     //      其他  失败。错误码
                     nRet = this.AddItems(
+                        null,
                         null,
                         out strError);
                     if (nRet != 0)
@@ -730,6 +919,7 @@ out string strFingerprint);
                         //      其他  失败。错误码
                         nRet = this.AddItems(
                             items,
+                            info,
                             out strError);
                         if (nRet != 0)
                             return -1;
@@ -746,6 +936,7 @@ out string strFingerprint);
                     //      其他  失败。错误码
                     nRet = this.AddItems(
                         items,
+                        info,
                         out strError);
                     if (nRet != 0)
                         return -1;
@@ -951,7 +1142,7 @@ out strError);
                     //      -2  remoting服务器连接失败。驱动程序尚未启动
                     //      -1  出错
                     //      >=0 实际发送给接口程序的事项数目
-                    nRet = CreateFingerprintCache(resultset,
+                    nRet = CreateFingerprintCache(resultset, null,
     out strError);
                     if (nRet == -1 || nRet == -2)
                         return -1;
@@ -1091,7 +1282,7 @@ out strError);
                 //      -2  remoting服务器连接失败。驱动程序尚未启动
                 //      -1  出错
                 //      >=0 实际发送给接口程序的事项数目
-                nRet = CreateFingerprintCache(resultset,
+                nRet = CreateFingerprintCache(resultset, null,
                     out strError);
                 if (nRet == -1 || nRet == -2)
                     return -1;
@@ -1240,6 +1431,34 @@ out string strError);
     {
         // [out] 返回图象
         public Image Image { get; set; }
+    }
+
+    public class ProcessInfo
+    {
+        // 新创建数量
+        public int NewCount { get; set; }
+        // 删除数量
+        public int DeleteCount { get; set; }
+        // 修改数量
+        public int ChangeCount { get; set; }
+
+        /*
+        public static ProcessInfo operator+(ProcessInfo info1, ProcessInfo info2)
+        {
+            ProcessInfo result = new ProcessInfo();
+            result.NewCount = info1.NewCount + info2.NewCount;
+            result.DeleteCount = info1.DeleteCount + info2.DeleteCount;
+            result.ChangeCount = info1.ChangeCount + info2.ChangeCount;
+            return result;
+        }
+        */
+
+        public static void AddTo(ProcessInfo info1, ProcessInfo info2)
+        {
+            info2.NewCount += info1.NewCount;
+            info2.DeleteCount += info1.DeleteCount;
+            info2.ChangeCount += info1.ChangeCount;
+        }
     }
 }
 

@@ -9,11 +9,15 @@ using System.Speech.Synthesis;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Diagnostics;
+
+using dp2SSL.Models;
 
 using DigitalPlatform;
 using DigitalPlatform.Core;
 using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
+using DigitalPlatform.RFID;
 using DigitalPlatform.Text;
 
 namespace dp2SSL
@@ -27,6 +31,9 @@ namespace dp2SSL
         public LibraryChannelPool _channelPool = new LibraryChannelPool();
 
         CancellationTokenSource _cancelRefresh = new CancellationTokenSource();
+
+        CancellationTokenSource _cancelProcessMonitor = new CancellationTokenSource();
+
 
         Mutex myMutex;
 
@@ -57,9 +64,24 @@ namespace dp2SSL
             }
         }
 
+        private string _number = null;
+
+        public string Number
+        {
+            get => _number;
+            set
+            {
+                if (_number != value)
+                {
+                    _number = value;
+                    OnPropertyChanged("Number");
+                }
+            }
+        }
+
         #endregion
 
-        protected override void OnStartup(StartupEventArgs e)
+        protected async override void OnStartup(StartupEventArgs e)
         {
             bool aIsNewInstance = false;
             myMutex = new Mutex(true, "{75BAF3F0-FF7F-46BB-9ACD-8FE7429BF291}", out aIsNewInstance);
@@ -95,7 +117,7 @@ namespace dp2SSL
             // InitialFingerPrint();
 
             // 后台自动检查更新
-            Task.Run(() =>
+            var task = Task.Run(() =>
             {
                 NormalResult result = WpfClientInfo.InstallUpdateSync();
                 if (result.Value == -1)
@@ -123,12 +145,108 @@ namespace dp2SSL
             RfidManager.Base.Name = "RFID 中心";
             RfidManager.Url = App.RfidUrl;
             RfidManager.SetError += RfidManager_SetError;
+            RfidManager.ListTags += RfidManager_ListTags;
             RfidManager.Start(_cancelRefresh.Token);
 
             FaceManager.Base.Name = "人脸中心";
             FaceManager.Url = App.FaceUrl;
-            FaceManager.SetError += FaceManager_SetError; ;
+            FaceManager.SetError += FaceManager_SetError;
             FaceManager.Start(_cancelRefresh.Token);
+
+            // 自动删除以前残留在 UserDir 中的全部临时文件
+            // 用 await 是需要删除完以后再返回，这样才能让后面的 PageMenu 页面开始使用临时文件目录
+            await Task.Run(() =>
+            {
+                DeleteLastTempFiles();
+            });
+
+            StartProcessManager();
+
+            BeginCheckServerUID(_cancelRefresh.Token);
+        }
+
+        // 单独的线程，监控 server UID 关系
+        public void BeginCheckServerUID(CancellationToken token)
+        {
+            var task1 = Task.Run(() =>
+            {
+                try
+                {
+                    while (token.IsCancellationRequested == false)
+                    {
+                        var result = PageSetting.CheckServerUID();
+                        if (result.Value == -1)
+                            SetError("uid", result.ErrorInfo);
+                        else
+                            SetError("uid", null);
+
+                        Task.Delay(TimeSpan.FromMinutes(5)).Wait(token);
+                    }
+                }
+                catch(OperationCanceledException)
+                {
+                    return;
+                }
+            });
+        }
+
+        public void StartProcessManager()
+        {
+            // 停止前一次的 monitor
+            if (_cancelProcessMonitor != null)
+            {
+                _cancelProcessMonitor.Cancel();
+                _cancelProcessMonitor.Dispose();
+
+                _cancelProcessMonitor = new CancellationTokenSource();
+            }
+
+            if (ProcessMonitor == true)
+            {
+                List<ProcessInfo> infos = new List<ProcessInfo>();
+                if (string.IsNullOrEmpty(App.FaceUrl) == false
+                    && ProcessManager.IsIpcUrl(App.FaceUrl))
+                    infos.Add(new ProcessInfo
+                    {
+                        Name = "人脸中心",
+                        ShortcutPath = "DigitalPlatform/dp2 V3/dp2-人脸中心",
+                        MutexName = "{E343F372-13A0-482F-9784-9865B112C042}"
+                    });
+                if (string.IsNullOrEmpty(App.RfidUrl) == false
+                    && ProcessManager.IsIpcUrl(App.RfidUrl))
+                    infos.Add(new ProcessInfo
+                    {
+                        Name = "RFID中心",
+                        ShortcutPath = "DigitalPlatform/dp2 V3/dp2-RFID中心",
+                        MutexName = "{CF1B7B4A-C7ED-4DB8-B5CC-59A067880F92}"
+                    });
+                if (string.IsNullOrEmpty(App.FingerprintUrl) == false
+                    && ProcessManager.IsIpcUrl(App.FingerprintUrl))
+                    infos.Add(new ProcessInfo
+                    {
+                        Name = "指纹中心",
+                        ShortcutPath = "DigitalPlatform/dp2 V3/dp2-指纹中心",
+                        MutexName = "{75FB942B-5E25-4228-9093-D220FFEDB33C}"
+                    });
+                ProcessManager.Start(infos,
+                    (info, text) =>
+                    {
+                        WpfClientInfo.Log?.Info($"{info.Name} {text}");
+                    },
+                    _cancelProcessMonitor.Token);
+            }
+        }
+
+        void DeleteLastTempFiles()
+        {
+            try
+            {
+                PathUtil.ClearDir(WpfClientInfo.UserTempDir);
+            }
+            catch (Exception ex)
+            {
+                this.AddErrors("global", new List<string> { $"清除上次遗留的临时文件时出现异常: {ex.Message}" });
+            }
         }
 
         private void FaceManager_SetError(object sender, SetErrorEventArgs e)
@@ -159,7 +277,8 @@ namespace dp2SSL
             WpfClientInfo.Finish();
             LibraryChannelManager.Log.Debug("End WpfClientInfo.Finish()");
 
-            _cancelRefresh.Cancel();
+            _cancelRefresh?.Cancel();
+            _cancelProcessMonitor?.Cancel();
 
             base.OnSessionEnding(e);
         }
@@ -172,6 +291,7 @@ namespace dp2SSL
             LibraryChannelManager.Log.Debug("End WpfClientInfo.Finish()");
 
             _cancelRefresh.Cancel();
+            _cancelProcessMonitor?.Cancel();
 
             // EndFingerprint();
 
@@ -232,6 +352,42 @@ namespace dp2SSL
             get
             {
                 return WpfClientInfo.Config?.Get("global", "faceUrl", "");
+            }
+        }
+
+        public static bool FullScreen
+        {
+            get
+            {
+                return WpfClientInfo.Config?.GetInt("global", "fullScreen", 1) == 1 ? true : false;
+            }
+        }
+
+        public static bool AutoTrigger
+        {
+            get
+            {
+                return (bool)WpfClientInfo.Config?.GetBoolean("operation", "auto_trigger", false);
+            }
+        }
+
+        public static bool ProcessMonitor
+        {
+            get
+            {
+                return (bool)WpfClientInfo.Config?.GetBoolean("global",
+                    "process_monitor",
+                    true);
+            }
+        }
+
+        public static string ShelfLocation
+        {
+            get
+            {
+                return WpfClientInfo.Config?.Get("shelf",
+                    "location",
+                    "");
             }
         }
 
@@ -435,6 +591,13 @@ DigitalPlatform.LibraryClient.BeforeLoginEventArgs e)
 
         public void SetError(string type, string error)
         {
+            /*
+            if (type == "face" && error != null)
+            {
+                Debug.Assert(false, "");
+            }
+            */
+
             _errorTable.SetError(type, error);
         }
 
@@ -443,5 +606,55 @@ DigitalPlatform.LibraryClient.BeforeLoginEventArgs e)
             // _errors.Clear();
             _errorTable.SetError(type, "");
         }
+
+        public event TagChangedEventHandler TagChanged = null;
+        // public event SetErrorEventHandler TagSetError = null;
+
+        private void RfidManager_ListTags(object sender, ListTagsEventArgs e)
+        {
+            // 标签总数显示
+            // this.Number = e.Result?.Results?.Count.ToString();
+            if (e.Result.Results != null)
+            {
+                TagList.Refresh(sender as BaseChannel<IRfid>, e.Result.Results,
+                        (add_books, update_books, remove_books, add_patrons, update_patrons, remove_patrons) =>
+                        {
+                            TagChanged?.Invoke(sender, new TagChangedEventArgs
+                            {
+                                AddBooks = add_books,
+                                UpdateBooks = update_books,
+                                RemoveBooks = remove_books,
+                                AddPatrons = add_patrons,
+                                UpdatePatrons = update_patrons,
+                                RemovePatrons = remove_patrons
+                            });
+                        },
+                        (type, text) =>
+                        {
+                            RfidManager.TriggerSetError(this, new SetErrorEventArgs { Error = text });
+                            // TagSetError?.Invoke(this, new SetErrorEventArgs { Error = text });
+                        });
+
+                // 标签总数显示 图书+读者卡
+                this.Number = $"{TagList.Books.Count}:{TagList.Patrons.Count}";
+            }
+        }
+    }
+
+    public delegate void TagChangedEventHandler(object sender,
+TagChangedEventArgs e);
+
+    /// <summary>
+    /// 设置标签变化事件的参数
+    /// </summary>
+    public class TagChangedEventArgs : EventArgs
+    {
+        public List<TagAndData> AddBooks { get; set; }
+        public List<TagAndData> UpdateBooks { get; set; }
+        public List<TagAndData> RemoveBooks { get; set; }
+
+        public List<TagAndData> AddPatrons { get; set; }
+        public List<TagAndData> UpdatePatrons { get; set; }
+        public List<TagAndData> RemovePatrons { get; set; }
     }
 }

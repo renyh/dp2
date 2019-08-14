@@ -9,13 +9,22 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Xml;
+using System.Windows.Media;
+
+using dp2SSL.Dialog;
+using dp2SSL.Models;
+using static dp2SSL.LibraryChannelUtil;
 
 using DigitalPlatform;
+using DigitalPlatform.Text;
+using DigitalPlatform.RFID;
 using DigitalPlatform.Interfaces;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
-using DigitalPlatform.RFID;
-using DigitalPlatform.Text;
+using DigitalPlatform.Xml;
+using DigitalPlatform.IO;
+using DigitalPlatform.Core;
 
 namespace dp2SSL
 {
@@ -28,7 +37,7 @@ namespace dp2SSL
         LayoutAdorner _adorner = null;
         AdornerLayer _layer = null;
 
-        Timer _timer = null;
+        // Timer _timer = null;
 
         EntityCollection _entities = new EntityCollection();
         Patron _patron = new Patron();
@@ -40,10 +49,12 @@ namespace dp2SSL
         {
             InitializeComponent();
 
+            /*
             _globalErrorTable = new ErrorTable((e) =>
             {
                 this.Error = e;
             });
+            */
             _patronErrorTable = new ErrorTable((e) =>
             {
                 _patron.Error = e;
@@ -63,18 +74,62 @@ namespace dp2SSL
             this._patron.PropertyChanged += _patron_PropertyChanged;
 
             // _patron.IsFingerprintSource = true;
+
+            App.CurrentApp.PropertyChanged += CurrentApp_PropertyChanged;
         }
+
+        private void CurrentApp_PropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == "Error")
+            {
+                OnPropertyChanged(e.PropertyName);
+            }
+        }
+
+        bool _stopVideo = false;
 
         private async void PatronControl_InputFace(object sender, EventArgs e)
         {
-            var result = await RecognitionFace("");
-            if (result.Value == -1)
-            {
-                SetPatronError("face", result.ErrorInfo);
-                return;
-            }
+            RecognitionFaceResult result = null;
 
-            SetPatronError("face", null);
+            VideoWindow videoRecognition = null;
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                videoRecognition = new VideoWindow
+                {
+                    TitleText = "识别人脸 ...",
+                    Owner = Application.Current.MainWindow,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+                videoRecognition.Closed += VideoRecognition_Closed;
+                videoRecognition.Show();
+            }));
+            _stopVideo = false;
+            var task = Task.Run(() =>
+            {
+                DisplayVideo(videoRecognition);
+            });
+            try
+            {
+                result = await RecognitionFace("");
+                if (result.Value == -1)
+                {
+                    if (result.ErrorCode != "cancelled")
+                        SetGlobalError("face", result.ErrorInfo);
+                    DisplayError(ref videoRecognition, result.ErrorInfo);
+                    return;
+                }
+
+                SetGlobalError("face", null);
+            }
+            finally
+            {
+                if (videoRecognition != null)
+                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                    {
+                        videoRecognition.Close();
+                    }));
+            }
 
             GetMessageResult message = new GetMessageResult
             {
@@ -82,7 +137,41 @@ namespace dp2SSL
                 Message = result.Patron,
             };
             SetPatronInfo(message);
-            FillPatronDetail();
+            await FillPatronDetail();
+        }
+
+        void DisplayVideo(VideoWindow window)
+        {
+            while (_stopVideo == false)
+            {
+                var result = FaceManager.GetImage("");
+                if (result.ImageData == null)
+                {
+                    Thread.Sleep(500);
+                    continue;
+                }
+                MemoryStream stream = new MemoryStream(result.ImageData);
+                try
+                {
+                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                    {
+                        window.SetPhoto(stream);
+                    }));
+                    stream = null;
+                }
+                finally
+                {
+                    if (stream != null)
+                        stream.Close();
+                }
+            }
+        }
+
+        private void VideoRecognition_Closed(object sender, EventArgs e)
+        {
+            FaceManager.CancelRecognitionFace();
+            _stopVideo = true;
+            RemoveLayer();
         }
 
         void EnableControls(bool enable)
@@ -112,13 +201,21 @@ namespace dp2SSL
             }
         }
 
-        private void PageBorrow_Loaded(object sender, RoutedEventArgs e)
+        private async void PageBorrow_Loaded(object sender, RoutedEventArgs e)
         {
             FingerprintManager.SetError += FingerprintManager_SetError;
             FingerprintManager.Touched += FingerprintManager_Touched;
 
+#if OLD_RFID
             RfidManager.SetError += RfidManager_SetError;
             RfidManager.ListTags += RfidManager_ListTags;
+#endif
+            App.CurrentApp.TagChanged += CurrentApp_TagChanged;
+            // App.CurrentApp.TagSetError += CurrentApp_TagSetError;
+
+            RfidManager.GetState("clearCache");
+            // 处理以前积累的 tags
+            // RfidManager.TriggerLastListTags();
 
             // 注：将来也许可以通过(RFID 以外的)其他方式输入图书号码
             if (string.IsNullOrEmpty(RfidManager.Url))
@@ -133,18 +230,211 @@ namespace dp2SSL
                     style.Add("rfid");
                 if (string.IsNullOrEmpty(App.FingerprintUrl) == false)
                     style.Add("fingerprint");
-                if (string.IsNullOrEmpty(App.FaceUrl) == false)
+                if (string.IsNullOrEmpty(App.FaceUrl) == false
+                    && StringUtil.IsInList("registerFace", this.ActionButtons) == false)
                     style.Add("face");
                 this.patronControl.SetStartMessage(StringUtil.MakePathList(style));
             }
+
+            await InitialEntities();
+
+            // SetGlobalError("test", "test error");
         }
 
-        private void RfidManager_ListTags(object sender, ListTagsEventArgs e)
+        /*
+        private void CurrentApp_TagSetError(object sender, SetErrorEventArgs e)
         {
-            Refresh(sender as BaseChannel<IRfid>, e.Result);
+            this.SetGlobalError("rfid", e.Error);
+        }
+        */
+
+        private async void CurrentApp_TagChanged(object sender, TagChangedEventArgs e)
+        {
+            await ChangeEntities((BaseChannel<IRfid>)sender, e);
         }
 
-        private void RfidManager_SetError(object sender, SetErrorEventArgs e)
+        // 跟随事件动态更新列表
+        async Task ChangeEntities(BaseChannel<IRfid> channel,
+            TagChangedEventArgs e)
+        {
+            // 读者。不再精细的进行增删改跟踪操作，而是笼统地看 TagList.Patrons 集合即可
+            var task = RefreshPatrons();
+
+            bool changed = false;
+            List<Entity> update_entities = new List<Entity>();
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                if (e.AddBooks != null)
+                    foreach (var tag in e.AddBooks)
+                    {
+                        var entity = _entities.Add(tag);
+                        update_entities.Add(entity);
+                    }
+                if (e.RemoveBooks != null)
+                    foreach (var tag in e.RemoveBooks)
+                    {
+                        _entities.Remove(tag.OneTag.UID);
+                        changed = true;
+                    }
+                if (e.UpdateBooks != null)
+                    foreach (var tag in e.UpdateBooks)
+                    {
+                        var entity = _entities.Update(tag);
+                        if (entity != null)
+                            update_entities.Add(entity);
+                    }
+            }));
+
+            if (update_entities.Count > 0)
+            {
+                await FillBookFields(channel, update_entities);
+
+                Trigger(update_entities);
+
+                // 自动检查 EAS 状态
+                CheckEAS(update_entities);
+            }
+            else if (changed)
+            {
+                // 修改 borrowable
+                booksControl.SetBorrowable();
+            }
+
+            if (update_entities.Count > 0)
+                changed = true;
+
+            {
+                if (_entities.Count == 0
+        && changed == true  // 限定为，当数量减少到 0 这一次，才进行清除
+        && _patron.IsFingerprintSource)
+                    PatronClear();
+
+                // 2019/7/1
+                // 当读卡器上的图书全部拿走时候，自动关闭残留的模式对话框
+                if (_entities.Count == 0
+    && changed == true  // 限定为，当数量减少到 0 这一次，才进行清除
+    )
+                    CloseDialogs();
+
+                // 当列表为空的时候，主动清空一次 tag 缓存。这样读者可以用拿走全部标签一次的方法来迫使清除缓存(比如中途利用内务修改过 RFID 标签的 EAS)
+                // TODO: 不过此举对反复拿放图书的响应速度有一定影响。后面也可以考虑继续改进(比如设立一个专门的清除缓存按钮，这里就不要清除缓存了)
+                if (_entities.Count == 0 && TagList.TagTableCount > 0)
+                    TagList.ClearTagTable(null);
+            }
+        }
+
+        // 首次初始化 Entity 列表
+        async Task<NormalResult> InitialEntities()
+        {
+            var books = TagList.Books;
+            if (books.Count > 0)
+            {
+                List<Entity> update_entities = new List<Entity>();
+
+                foreach (var tag in books)
+                {
+                    var entity = _entities.Add(tag);
+                    update_entities.Add(entity);
+                }
+
+                if (update_entities.Count > 0)
+                {
+                    try
+                    {
+                        BaseChannel<IRfid> channel = RfidManager.GetChannel();
+                        try
+                        {
+                            await FillBookFields(channel, update_entities);
+
+                            Trigger(update_entities);
+                        }
+                        finally
+                        {
+                            RfidManager.ReturnChannel(channel);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        string error = $"填充图书信息时出现异常: {ex.Message}";
+                        SetGlobalError("rfid", error);
+                        return new NormalResult { Value = -1, ErrorInfo = error };
+                    }
+
+                    // 自动检查 EAS 状态
+                    CheckEAS(update_entities);
+                }
+            }
+
+            var task = RefreshPatrons();
+            return new NormalResult();
+        }
+
+        void Trigger(List<Entity> update_entities)
+        {
+            return;
+            List<Entity> results = new List<Entity>();
+            foreach (var entity in update_entities)
+            {
+                // 检查 PII。TODO: 还要检查在架状态
+                if (string.IsNullOrEmpty(entity.PII) == false)
+                    results.Add(entity);
+            }
+            if (results.Count == 0)
+                return;
+
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                MessageBox.Show($"开始。数量 [{results.Count}]");
+            }));
+        }
+
+        ReaderWriterLockSlim _lock_refreshPatrons = new ReaderWriterLockSlim();
+
+        async Task RefreshPatrons()
+        {
+            //_lock_refreshPatrons.EnterWriteLock();
+            try
+            {
+                var patrons = TagList.Patrons;
+                if (patrons.Count == 1)
+                    _patron.IsRfidSource = true;
+
+                if (_patron.IsFingerprintSource)
+                {
+                    // 指纹仪来源
+                }
+                else
+                {
+                    // RFID 来源
+                    if (patrons.Count == 1)
+                    {
+                        _patron.Fill(patrons[0].OneTag);
+                        SetPatronError("rfid_multi", "");   // 2019/5/22
+
+                        // 2019/5/29
+                        await FillPatronDetail();
+                    }
+                    else
+                    {
+                        PatronClear();
+                        SetPatronError("getreaderinfo", "");
+                        if (patrons.Count > 1)
+                        {
+                            // 读卡器上放了多张读者卡
+                            SetPatronError("rfid_multi", $"读卡器上放了多张读者卡({patrons.Count})。请拿走多余的");
+                        }
+                        else
+                            SetPatronError("rfid_multi", "");   // 2019/5/20
+                    }
+                }
+            }
+            finally
+            {
+                //_lock_refreshPatrons.ExitWriteLock();
+            }
+        }
+
+        private async void RfidManager_SetError(object sender, SetErrorEventArgs e)
         {
             SetGlobalError("rfid", e.Error);
             if (e.Error == null)
@@ -156,11 +446,11 @@ namespace dp2SSL
                 // 进入错误状态
                 if (_rfidState != "error")
                 {
-                    ClearBooksAndPatron(null);
+                    await ClearBooksAndPatron(null);
                     /*
                     ClearBookList();
                     FillBookFields(channel);
-                    _patron.Clear();
+                    PatronClear();
                     */
                 }
 
@@ -168,17 +458,26 @@ namespace dp2SSL
             }
         }
 
+#if OLD_RFID
+        private async void RfidManager_ListTags(object sender, ListTagsEventArgs e)
+        {
+            await Refresh(sender as BaseChannel<IRfid>, e.Result);
+        }
+
+
+#endif
+
         private void FingerprintManager_SetError(object sender, SetErrorEventArgs e)
         {
             SetGlobalError("fingerprint", e.Error);
         }
 
         // 从指纹阅读器获取消息(第一阶段)
-        private void FingerprintManager_Touched(object sender, TouchedEventArgs e)
+        private async void FingerprintManager_Touched(object sender, TouchedEventArgs e)
         {
             SetPatronInfo(e.Result);
 
-            FillPatronDetail();
+            await FillPatronDetail();
 
 #if NO
             Application.Current.Dispatcher.Invoke(new Action(() =>
@@ -298,6 +597,24 @@ namespace dp2SSL
             MessageBox.Show(Message);
         }
 #endif
+        List<Window> _dialogs = new List<Window>();
+
+        void CloseDialogs()
+        {
+            // 确保 page 关闭时对话框能自动关闭
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                foreach (var window in _dialogs)
+                {
+                    window.Close();
+                }
+            }));
+        }
+
+        void MemoryDialog(Window dialog)
+        {
+            _dialogs.Add(dialog);
+        }
 
         private void PageBorrow_Unloaded(object sender, RoutedEventArgs e)
         {
@@ -318,14 +635,23 @@ namespace dp2SSL
             }
 #endif
 
+            /*
             if (_timer != null)
                 _timer.Dispose();
+                */
 
             RfidManager.SetError -= RfidManager_SetError;
+#if OLD_RFID
             RfidManager.ListTags -= RfidManager_ListTags;
+#endif
+            App.CurrentApp.TagChanged -= CurrentApp_TagChanged;
+            // App.CurrentApp.TagSetError -= CurrentApp_TagSetError;
 
             FingerprintManager.Touched -= FingerprintManager_Touched;
             FingerprintManager.SetError -= FingerprintManager_SetError;
+
+            // 确保 page 关闭时对话框能自动关闭
+            CloseDialogs();
         }
 
         bool _visiblityChanged = false;
@@ -380,17 +706,6 @@ namespace dp2SSL
 
         // CancellationTokenSource _cancelRefresh = null;
 
-#if NO
-        void timerCallback(object o)
-        {
-            // 避免重叠启动
-            if (_cancelRefresh != null)
-                return;
-
-            Refresh();
-        }
-#endif
-
         public string ActionButtons
         {
             get
@@ -402,6 +717,9 @@ namespace dp2SSL
                     buttons.Add("return");
                 if (renewButton.Visibility == Visibility.Visible)
                     buttons.Add("renew");
+                if (registerFace.Visibility == Visibility.Visible)
+                    buttons.Add("registerFace");
+
                 return StringUtil.MakePathList(buttons);
             }
             set
@@ -423,11 +741,32 @@ namespace dp2SSL
                 else
                     renewButton.Visibility = Visibility.Collapsed;
 
-                // (普通)还书和续借操作并不需要读者卡
-                if (borrowButton.Visibility != Visibility.Visible)
-                    this.patronControl.Visibility = Visibility.Collapsed;
+                if (buttons.IndexOf("registerFace") != -1)
+                    registerFace.Visibility = Visibility.Visible;
+                else
+                    registerFace.Visibility = Visibility.Collapsed;
+
+                if (buttons.IndexOf("deleteFace") != -1)
+                    deleteFace.Visibility = Visibility.Visible;
+                else
+                    deleteFace.Visibility = Visibility.Collapsed;
+
+                if (registerFace.Visibility == Visibility.Visible
+                    || deleteFace.Visibility == Visibility.Visible)
+                {
+                    this.booksControl.Visibility = Visibility.Collapsed;
+                    // this.patronControl.HideInputFaceButton();
+                }
+                else
+                {
+                    // (普通)还书和续借操作并不需要读者卡
+                    if (borrowButton.Visibility != Visibility.Visible)
+                        this.patronControl.Visibility = Visibility.Collapsed;
+                }
             }
         }
+
+#if OLD_RFID
 
         // uid --> TagInfo
         Hashtable _tagTable = new Hashtable();
@@ -465,6 +804,8 @@ namespace dp2SSL
             return new GetTagInfoResult { TagInfo = info };
         }
 
+#endif
+
         // 清除图书列表
         void ClearBookList()
         {
@@ -475,28 +816,32 @@ namespace dp2SSL
             }));
         }
 
-        void ClearBooksAndPatron(BaseChannel<IRfid> channel)
+        async Task ClearBooksAndPatron(BaseChannel<IRfid> channel)
         {
             try
             {
                 ClearBookList();
-                FillBookFields(channel);
+                await FillBookFields(channel, new List<Entity>());
             }
             catch (Exception ex)
             {
                 LibraryChannelManager.Log?.Error($"ClearBooksAndPatron() 发生异常: {ExceptionUtil.GetExceptionText(ex)}");
             }
-            _patron.Clear();
+            PatronClear();
         }
 
+        //ReaderWriterLockSlim _lock = new ReaderWriterLockSlim();
+        //object _sync_refresh = new object();
         int _inRefresh = 0;
 
         string _rfidState = "ok";   // ok/error
 
-        void Refresh(BaseChannel<IRfid> channel, ListTagsResult result)
+#if OLD_RFID
+        async Task Refresh(BaseChannel<IRfid> channel, ListTagsResult result)
         {
             Debug.Assert(channel != null, "");
 
+            /*
             // 防止重入
             int v = Interlocked.Increment(ref this._inRefresh);
             if (v > 1)
@@ -504,6 +849,7 @@ namespace dp2SSL
                 Interlocked.Decrement(ref this._inRefresh);
                 return;
             }
+            */
 
             // _cancelRefresh = new CancellationTokenSource();
             try
@@ -518,7 +864,7 @@ namespace dp2SSL
                     // RFID 正常状态和错误状态之间切换时才需要连带清掉读者信息
                     if (_rfidState != "error")
                     {
-                        ClearBooksAndPatron(channel);
+                        await ClearBooksAndPatron(channel);
                         /*
                         ClearBookList();
                         FillBookFields(channel);
@@ -584,6 +930,13 @@ namespace dp2SSL
                         && changed == true  // 限定为，当数量减少到 0 这一次，才进行清除
                         && _patron.IsFingerprintSource)
                         _patron.Clear();
+
+                    // 2019/7/1
+                    // 当读卡器上的图书全部拿走时候，自动关闭残留的模式对话框
+                    if (_entities.Count == 0
+    && changed == true  // 限定为，当数量减少到 0 这一次，才进行清除
+    )
+                        CloseDialogs();
                 }
 
                 // 当列表为空的时候，主动清空一次 tag 缓存。这样读者可以用拿走全部标签一次的方法来迫使清除缓存(比如中途利用内务修改过 RFID 标签的 EAS)
@@ -606,7 +959,7 @@ namespace dp2SSL
                         SetPatronError("rfid_multi", "");   // 2019/5/22
 
                         // 2019/5/29
-                        FillPatronDetail();
+                        var task = FillPatronDetail();
                     }
                     else
                     {
@@ -624,7 +977,7 @@ namespace dp2SSL
 
                 //GetPatronFromFingerprint();
 
-                FillBookFields(channel);
+                await FillBookFields(channel, _entities);
                 // FillPatronDetail();
 
                 CheckEAS(new_entities);
@@ -636,10 +989,10 @@ namespace dp2SSL
             }
             finally
             {
-                // _cancelRefresh = null;
-                Interlocked.Decrement(ref this._inRefresh);
+                // Interlocked.Decrement(ref this._inRefresh);
             }
         }
+#endif
 
         // 检查芯片的 EAS 状态
         void CheckEAS(List<Entity> entities)
@@ -675,7 +1028,7 @@ namespace dp2SSL
             {
                 SetPatronError("fingerprint", $"指纹中心出错: {result.ErrorInfo}, 错误码: {result.ErrorCode}");
                 if (_patron.IsFingerprintSource)
-                    _patron.Clear();    // 只有当面板上的读者信息来源是指纹仪时，才清除面板上的读者信息
+                    PatronClear();    // 只有当面板上的读者信息来源是指纹仪时，才清除面板上的读者信息
                 return;
             }
             else
@@ -687,7 +1040,7 @@ namespace dp2SSL
             if (result.Message == null)
                 return;
 
-            _patron.Clear();
+            PatronClear();
             _patron.IsFingerprintSource = true;
             _patron.PII = result.Message;
             // TODO: 此种情况下，要禁止后续从读卡器获取，直到新一轮开始。
@@ -739,7 +1092,7 @@ namespace dp2SSL
         }
 #endif
         // 填充读者信息的其他字段(第二阶段)
-        void FillPatronDetail()
+        async Task<NormalResult> FillPatronDetail(bool force = false)
         {
 #if NO
             if (_cancelRefresh == null
@@ -758,37 +1111,73 @@ namespace dp2SSL
 #endif
 
             // 已经填充过了
-            if (_patron.PatronName != null)
-                return;
+            if (_patron.PatronName != null
+                && force == false)
+                return new NormalResult();
 
             string pii = _patron.PII;
             if (string.IsNullOrEmpty(pii))
                 pii = _patron.UID;
 
             if (string.IsNullOrEmpty(pii))
-                return;
+                return new NormalResult();
 
+            // TODO: 改造为 await
             // return.Value:
             //      -1  出错
             //      0   读者记录没有找到
             //      1   成功
-            NormalResult result = GetReaderInfo(pii,
-                out string recpath,
-                out string reader_xml);
+            GetReaderInfoResult result = await
+                Task<GetReaderInfoResult>.Run(() =>
+                {
+                    return GetReaderInfo(pii);
+                });
+
             if (result.Value != 1)
             {
-                SetPatronError("getreaderinfo", $"读者 '{pii}': {result.ErrorInfo}");
-                return;
+                string error = $"读者 '{pii}': {result.ErrorInfo}";
+                SetPatronError("getreaderinfo", error);
+                return new NormalResult { Value = -1, ErrorInfo = error };
             }
 
             SetPatronError("getreaderinfo", "");
 
+            if (force)
+                _patron.PhotoPath = "";
             // string old_photopath = _patron.PhotoPath;
             Application.Current.Dispatcher.Invoke(new Action(() =>
             {
-                _patron.SetPatronXml(recpath, reader_xml);
+                _patron.SetPatronXml(result.RecPath, result.ReaderXml, result.Timestamp);
+                this.patronControl.SetBorrowed(result.ReaderXml);
             }));
 
+            // 显示在借图书列表
+            List<Entity> entities = new List<Entity>();
+            foreach (Entity entity in this.patronControl.BorrowedEntities)
+            {
+                entities.Add(entity);
+            }
+            if (entities.Count > 0)
+            {
+                try
+                {
+                    BaseChannel<IRfid> channel = RfidManager.GetChannel();
+                    try
+                    {
+                        await FillBookFields(channel, entities);
+                    }
+                    finally
+                    {
+                        RfidManager.ReturnChannel(channel);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    string error = $"填充读者信息时出现异常: {ex.Message}";
+                    SetGlobalError("rfid", error);
+                    return new NormalResult { Value = -1, ErrorInfo = error };
+                }
+            }
 #if NO
             // 装载图象
             if (old_photopath != _patron.PhotoPath)
@@ -798,6 +1187,7 @@ namespace dp2SSL
                 });
             }
 #endif
+            return new NormalResult();
         }
 
         void LoadPhoto(string photo_path)
@@ -822,7 +1212,7 @@ namespace dp2SSL
                     "data,content", // strGetStyle,
                     null,   // byte [] input_timestamp,
                     out string strMetaData,
-                    out byte [] baOutputTimeStamp,
+                    out byte[] baOutputTimeStamp,
                     out string strOutputPath,
                     out string strError);
                 if (lRet == -1)
@@ -847,7 +1237,8 @@ namespace dp2SSL
         }
 
         // 第二阶段：填充图书信息的 PII 和 Title 字段
-        void FillBookFields(BaseChannel<IRfid> channel)
+        async Task FillBookFields(BaseChannel<IRfid> channel,
+            List<Entity> entities)
         {
 #if NO
             RfidChannel channel = RFID.StartRfidChannel(App.RfidUrl,
@@ -857,11 +1248,13 @@ out string strError);
 #endif
             try
             {
-                foreach (Entity entity in _entities)
+                foreach (Entity entity in entities)
                 {
+                    /*
                     if (_cancel == null
                         || _cancel.IsCancellationRequested)
                         return;
+                        */
 
                     if (entity.FillFinished == true)
                         continue;
@@ -870,9 +1263,12 @@ out string strError);
                     //    continue;
 
                     // 获得 PII
-                    // 注：如果 PII 为空，文字重要填入 "(空)"
+                    // 注：如果 PII 为空，文字中要填入 "(空)"
                     if (string.IsNullOrEmpty(entity.PII))
                     {
+                        if (entity.TagInfo == null)
+                            continue;
+#if OLD_RFID
                         if (entity.TagInfo == null && channel != null)
                         {
                             // var result = channel.Object.GetTagInfo("*", entity.UID);
@@ -887,6 +1283,7 @@ out string strError);
 
                             entity.TagInfo = result.TagInfo;
                         }
+#endif
 
                         Debug.Assert(entity.TagInfo != null);
 
@@ -903,18 +1300,23 @@ out string strError);
                     if (string.IsNullOrEmpty(entity.Title)
                         && string.IsNullOrEmpty(entity.PII) == false && entity.PII != "(空)")
                     {
-                        var result = GetEntityData(entity.PII,
-                            out string title,
-                            out string item_xml,
-                            out string item_recpath);
+                        GetEntityDataResult result = await
+                            Task<GetEntityDataResult>.Run(() =>
+                            {
+                                return GetEntityData(entity.PII);
+                            });
+                        /*
+                        out string title,
+                        out string item_xml,
+                        out string item_recpath);
+                        */
                         if (result.Value == -1)
                         {
                             entity.SetError(result.ErrorInfo);
                             continue;
                         }
-                        entity.Title = GetCaption(title);
-                        // entity.ItemXml = item_xml;
-                        entity.SetData(item_recpath, item_xml);
+                        entity.Title = GetCaption(result.Title);
+                        entity.SetData(result.ItemRecPath, result.ItemXml);
                     }
 
                     entity.SetError(null);
@@ -925,21 +1327,11 @@ out string strError);
             }
             catch (Exception ex)
             {
-#if NO
-                this.error.Text = ex.Message;
-                this.error.Visibility = Visibility.Visible;
-#endif
                 SetGlobalError("current", ex.Message);
-            }
-            finally
-            {
-#if NO
-                RFID.EndRfidChannel(channel);
-#endif
             }
         }
 
-        static string GetCaption(string text)
+        public static string GetCaption(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return "(空)";
@@ -947,108 +1339,9 @@ out string strError);
             return text;
         }
 
-        // 获得一个册的题名字符串
-        NormalResult GetEntityData(string pii,
-            out string title,
-            out string item_xml,
-            out string item_recpath)
-        {
-            title = "";
-            item_xml = "";
-            item_recpath = "";
 
-            LibraryChannel channel = App.CurrentApp.GetChannel();
-            try
-            {
-#if NO
-                GetItemInfo(
-    stop,
-    "item",
-    strBarcode,
-    "",
-    strResultType,
-    out strResult,
-    out strItemRecPath,
-    out item_timestamp,
-    strBiblioType,
-    out strBiblio,
-    out strBiblioRecPath,
-    out strError);
-#endif
-                long lRet = channel.GetItemInfo(null,
-                    "item",
-                    pii,
-                    "",
-                    "xml",
-                    out item_xml,
-                    out item_recpath,
-                    out byte[] item_timestamp,
-                    "",
-                    out string biblio_xml,
-                    out string biblio_recpath,
-                    out string strError);
-                if (lRet == -1)
-                    return new NormalResult { Value = -1, ErrorInfo = strError };
 
-                lRet = channel.GetBiblioSummary(
-    null,
-    pii,
-    "", // strConfirmItemRecPath,
-    null,
-    out string strBiblioRecPath,
-    out string strSummary,
-    out strError);
-                if (lRet == -1)
-                    return new NormalResult { Value = -1, ErrorInfo = strError };
-
-                title = strSummary;
-
-                return new NormalResult();
-            }
-            finally
-            {
-                App.CurrentApp.ReturnChannel(channel);
-            }
-        }
-
-        // return.Value:
-        //      -1  出错
-        //      0   读者记录没有找到
-        //      1   成功
-        NormalResult GetReaderInfo(string pii,
-            out string recpath,
-            out string reader_xml)
-        {
-            reader_xml = "";
-            recpath = "";
-            if (string.IsNullOrEmpty(App.dp2ServerUrl) == true)
-                return new NormalResult { Value = -1, ErrorInfo = "dp2library 服务器 URL 尚未配置，无法获得读者信息" };
-            LibraryChannel channel = App.CurrentApp.GetChannel();
-            try
-            {
-                long lRet = channel.GetReaderInfo(null,
-                    pii,
-                    "xml",
-                    out string[] results,
-                    out recpath,
-                    out byte[] baTimestamp,
-                    out string strError);
-                if (lRet == -1)
-                    return new NormalResult { Value = -1, ErrorInfo = strError };
-                if (lRet == 0)
-                    return new NormalResult { Value = 0, ErrorInfo = strError };
-
-                if (results != null && results.Length > 0)
-                    reader_xml = results[0];
-                return new NormalResult { Value = 1 };
-            }
-            finally
-            {
-                App.CurrentApp.ReturnChannel(channel);
-            }
-        }
-
-#region 属性
+        #region 属性
 
 #if NO
         private void Entities_PropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -1080,6 +1373,7 @@ out string strError);
         }
 #endif
 
+        /*
         private string _error = null;   // "test error line asdljasdkf; ;jasldfjasdjkf aasdfasdf";
 
         public string Error
@@ -1093,6 +1387,24 @@ out string strError);
                     OnPropertyChanged("Error");
                 }
             }
+        }
+        */
+
+        public string Error
+        {
+            get
+            {
+                return App.CurrentApp.Error;
+            }
+            /*
+            set
+            {
+                if (App.CurrentApp.Error != value)
+                {
+                    App.CurrentApp.Error = value;
+                    OnPropertyChanged("Error");
+                }
+            }*/
         }
 
         private string _globalError = null;   // "test error line asdljasdkf; ;jasldfjasdjkf aasdfasdf";
@@ -1111,7 +1423,7 @@ out string strError);
         }
 
 
-#endregion
+        #endregion
 
         // 借书
         private void BorrowButton_Click(object sender, RoutedEventArgs e)
@@ -1164,12 +1476,15 @@ out string strError);
                 if (string.IsNullOrEmpty(check_message))
                     check_message = $"读卡器上的当前读者卡状态不正确。无法进行{action_name}操作";
 
+                DisplayError(ref progress, check_message);
+                /*
                 Application.Current.Dispatcher.Invoke(new Action(() =>
                 {
-                    progress.MessageText = check_message;
+                    progress.MessageText = ;
                     progress.BackColor = "red";
                     progress = null;
                 }));
+                */
                 return;
             }
 
@@ -1178,12 +1493,17 @@ out string strError);
             {
                 if (string.IsNullOrEmpty(_patron.Barcode))
                 {
+                    DisplayError(ref progress, $"请先在读卡器上放好读者卡，再进行{action_name}");
+
+                    /*
+                    MemoryDialog(progress);
                     Application.Current.Dispatcher.Invoke(new Action(() =>
                     {
                         progress.MessageText = $"请先在读卡器上放好读者卡，再进行{action_name}";
                         progress.BackColor = "red";
                         progress = null;
                     }));
+                    */
                     return;
                 }
             }
@@ -1343,11 +1663,17 @@ out string strError);
                 if (errors.Count > 0)
                 {
                     string error = StringUtil.MakePathList(errors, "\r\n");
-                    string message = $"{action_name}操作出错 {errors.Count} 笔";
+                    string message = $"{action_name}操作出错 {errors.Count} 个";
                     if (success_count > 0)
-                        message += $"，成功 {success_count} 笔";
+                        message += $"，成功 {success_count} 个";
                     if (skip_count > 0)
-                        message += $" (另有 {skip_count} 笔被忽略)";
+                        message += $" (另有 {skip_count} 个被忽略)";
+
+                    DisplayError(ref progress, message);
+                    App.CurrentApp.Speak(message);
+
+                    /*
+                    MemoryDialog(progress);
                     Application.Current.Dispatcher.Invoke(new Action(() =>
                     {
                         progress.MessageText = message;
@@ -1356,6 +1682,7 @@ out string strError);
                         progress.BackColor = "red";
                         progress = null;
                     }));
+                    */
                     return; // new NormalResult { Value = -1, ErrorInfo = StringUtil.MakePathList(errors, "; ") };
                 }
                 else
@@ -1370,12 +1697,23 @@ out string strError);
                         backColor = "yellow";
                         message = $"全部 {skip_count} 笔{action_name}操作被忽略";
                     }
+
+                    DisplayError(ref progress, message, backColor);
+
+                    /*
+                    MemoryDialog(progress);
                     Application.Current.Dispatcher.Invoke(new Action(() =>
                     {
                         progress.MessageText = message;
                         progress.BackColor = backColor;
                         progress = null;
                     }));
+                    */
+
+                    // 重新装载读者信息和显示
+                    var task = FillPatronDetail(true);
+
+                    App.CurrentApp.Speak($"{action_name}完成");
                 }
 
                 return; // new NormalResult { Value = success_count };
@@ -1400,8 +1738,17 @@ out string strError);
         {
             try
             {
+#if OLD_RFID
                 this.ClearTagTable(uid);
-                return RfidManager.SetEAS($"{uid}", enable);
+#endif
+                // TagList.ClearTagTable(uid);
+                var result = RfidManager.SetEAS($"{uid}", enable);
+                if (result.Value != -1)
+                {
+                    TagList.SetEasData(uid, enable);
+                    _entities.SetEasData(uid, enable);
+                }
+                return result;
             }
             catch (Exception ex)
             {
@@ -1441,10 +1788,23 @@ out string strError);
                 else
                     message = $"请先放好读者卡，然后再进行借书操作({debug_info})";
             }
+            else if (action == "registerFace"
+                || action == "deleteFace")
+            {
+                string action_name = "注册人脸";
+                if (action == "deleteFace")
+                    action_name = "删除人脸";
+
+                // 提示信息要考虑到应用了指纹的情况
+                if (string.IsNullOrEmpty(App.FingerprintUrl) == false)
+                    message = $"请先放好读者卡，或扫入一次指纹，然后再进行{action_name}操作({debug_info})";
+                else
+                    message = $"请先放好读者卡，然后再进行{action_name}操作({debug_info})";
+            }
             else
             {
                 // 调试用
-                message = $"读卡器上的当前读者卡状态不正确。无法进行 xxx 操作({debug_info})";
+                message = $"读卡器上的当前读者卡状态不正确。无法进行 {action} 操作({debug_info})";
             }
             return false;
         }
@@ -1531,7 +1891,7 @@ out string strError);
             this.NavigationService.Navigate(new PageMenu());
         }
 
-#region patron 分类报错机制
+        #region patron 分类报错机制
 
         // 错误类别 --> 错误字符串
         // 错误类别有：rfid fingerprint getreaderinfo
@@ -1572,22 +1932,27 @@ out string strError);
         }
 #endif
 
-#endregion
+        #endregion
 
-#region global 分类报错机制
+        #region global 分类报错机制
 
         // 错误类别 --> 错误字符串
         // 错误类别有：rfid fingerprint
-        ErrorTable _globalErrorTable = null;
+        // ErrorTable _globalErrorTable = null;
 
         // 设置全局区域错误字符串
         void SetGlobalError(string type, string error)
         {
+            /*
             _globalErrorTable.SetError(type, error);
 
             // 指纹方面的报错，还要兑现到 App 中
             if (type == "fingerprint" || type == "rfid")
                 App.CurrentApp?.SetError(type, error);
+                */
+            // Debug.Assert(type != "face", "");
+
+            App.CurrentApp.SetError(type, error);
         }
 
 #if NO
@@ -1618,7 +1983,716 @@ out string strError);
         }
 #endif
 
-#endregion
+        #endregion
 
+        private async void RegisterFace_Click(object sender, RoutedEventArgs e)
+        {
+            await RegisterFace("registerFace");
+        }
+
+        // 注册或者删除人脸
+        private async Task RegisterFace(string action)
+        {
+            GetFeatureStringResult result = null;
+
+            string action_name = "注册人脸";
+            if (action == "deleteFace")
+                action_name = "删除人脸";
+
+            VideoWindow videoRegister = null;
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                videoRegister = new VideoWindow
+                {
+                    TitleText = $"{action_name} ...",
+                    Owner = Application.Current.MainWindow,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+                videoRegister.Closed += VideoRegister_Closed;
+                videoRegister.Show();
+                AddLayer();
+            }));
+            try
+            {
+                if (IsPatronOK(action, out string check_message) == false)
+                {
+                    if (string.IsNullOrEmpty(check_message))
+                        check_message = $"读卡器上的当前读者卡状态不正确。无法进行{action_name}操作";
+
+                    DisplayError(ref videoRegister, check_message, "yellow");
+                    return;
+                }
+
+                if (action == "registerFace")
+                {
+                    _stopVideo = false;
+                    try
+                    {
+                        var task = Task.Run(() =>
+                        {
+                            DisplayVideo(videoRegister);
+                        });
+
+                        // 启动一个单独的显示倒计时数字的任务
+                        var task1 = Task.Run(() =>
+                        {
+                            for (int i = 5; i > 0; i--)
+                            {
+                                if (_stopVideo == true)
+                                    break;
+                                if (videoRegister != null)
+                                {
+                                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                                    {
+                                        videoRegister.TitleText = $"倒计时 {i}";
+                                    }));
+                                }
+                                Thread.Sleep(1000);
+                            }
+                            if (videoRegister != null)
+                            {
+                                Application.Current.Dispatcher.Invoke(new Action(() =>
+                                {
+                                    videoRegister.TitleText = "拍摄";
+                                }));
+                            }
+                        });
+
+                        result = await GetFeatureString("returnImage,countDown,format:jpeg");
+                        if (result.Value == -1)
+                        {
+                            DisplayError(ref videoRegister, result.ErrorInfo);
+                            return;
+                        }
+
+                        if (result.Value == 0)
+                        {
+                            DisplayError(ref videoRegister, result.ErrorInfo);
+                            return;
+                        }
+
+                        // SetGlobalError("face", null);
+                    }
+                    finally
+                    {
+                        _stopVideo = true;
+                    }
+                    // TODO: 背景变为绿色
+                }
+
+                videoRegister.Background = new SolidColorBrush(Colors.DarkGreen);
+                videoRegister.MessageText = "正在写入读者记录 ...";
+                // Thread.Sleep(1000);
+
+                bool changed = false;
+                XmlDocument dom = new XmlDocument();
+                dom.LoadXml(_patron.Xml);
+
+                if (action == "registerFace")
+                {
+                    // TODO: 对话框提示以前已经登记过人脸，是否要覆盖？
+
+                    // 在读者 XML 记录中加入 face 元素
+                    if (!(dom.DocumentElement.SelectSingleNode("face") is XmlElement face))
+                    {
+                        face = dom.CreateElement("face");
+                        dom.DocumentElement.AppendChild(face);
+                    }
+                    face.SetAttribute("version", result.Version);
+                    face.InnerText = result.FeatureString;
+                    changed = true;
+                }
+                else if (action == "deleteFace")
+                {
+                    // 删除 face 元素
+                    if (!(dom.DocumentElement.SelectSingleNode("face") is XmlElement face))
+                    {
+                        // 报错说本来就没有人脸信息，所以也没有必要删除
+                        DisplayError(ref videoRegister, "读者记录中原本不存在人脸信息 ...");
+                        return;
+                    }
+                    else
+                    {
+                        face.ParentNode.RemoveChild(face);
+                        changed = true;
+                    }
+                }
+
+                // 删除 dprms:file 元素
+                string object_path = "";
+
+                if (action == "registerFace")
+                {
+                    if (GetCardPhotoObjectPath(dom,
+        "face",
+        _patron.RecPath,
+        out object_path) == true)
+                        changed = true;
+                }
+                else
+                {
+                    // return:
+                    //      false   没有发生修改
+                    //      true    发生了修改
+                    if (RemoveCardPhotoObject(dom, "face") == true)
+                        changed = true;
+                }
+
+                // TODO: 用 WPF 对话框
+                if (action == "deleteFace")
+                {
+                    MessageBoxResult dialog_result = MessageBox.Show(
+                        "确实要删除人脸信息?\r\n\r\n(人脸信息删除以后，您将无法使用人脸识别功能)",
+                        "dp2SSL",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Question);
+                    if (dialog_result == MessageBoxResult.No)
+                        return;
+                }
+
+
+                if (changed == true)
+                {
+                    // 保存读者记录
+                    var save_result = await SetReaderInfo(_patron.RecPath,
+                        dom.OuterXml,
+                        _patron.Xml,
+                        _patron.Timestamp);
+                    if (save_result.Value == -1)
+                    {
+                        DisplayError(ref videoRegister, save_result.ErrorInfo);
+                        return;
+                    }
+
+                    _patron.Timestamp = save_result.NewTimestamp;
+                    _patron.Xml = dom.OuterXml;
+                }
+
+                if (action == "registerFace")
+                {
+                    videoRegister.MessageText = "正在上传读者照片 ...";
+                    // Thread.Sleep(1000);
+
+                    // 上传头像
+                    var upload_result = await UploadObject(
+            object_path,
+            result.ImageData);
+                    if (upload_result.Value == -1)
+                    {
+                        DisplayError(ref videoRegister,
+                            $"上传头像文件失败: {upload_result.ErrorInfo}");
+                        return;
+                    }
+                }
+
+                // 上传完对象后通知 facecenter DoReplication 一次
+                var notify_result = FaceManager.Notify("faceChanged");
+                if (notify_result.Value == -1)
+                    SetGlobalError("face", notify_result.ErrorInfo);
+
+                string message = $"{action_name}成功";
+                if (action == "deleteFace")
+                    App.CurrentApp.Speak(message);
+                DisplayError(ref videoRegister, message, "green");
+            }
+            finally
+            {
+                if (videoRegister != null)
+                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                    {
+                        videoRegister.Close();
+                    }));
+            }
+
+            // 刷新读者信息区显示
+            var temp_task = FillPatronDetail(true);
+        }
+
+        void DisplayError(ref ProgressWindow progress,
+    string message,
+    string color = "red")
+        {
+            MemoryDialog(progress);
+            var temp = progress;
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                temp.MessageText = message;
+                temp.BackColor = color;
+                temp = null;
+            }));
+            progress = null;
+        }
+
+        void DisplayError(ref VideoWindow videoRegister,
+            string message,
+            string color = "red")
+        {
+            MemoryDialog(videoRegister);
+            var temp = videoRegister;
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                temp.MessageText = message;
+                temp.BackColor = color;
+                temp.okButton.Content = "返回";
+                temp = null;
+            }));
+            videoRegister = null;
+        }
+
+        Task<NormalResult> UploadObject(
+            string object_path,
+            byte[] imageData)
+        {
+            return Task<NormalResult>.Run(() =>
+            {
+                LibraryChannel channel = App.CurrentApp.GetChannel();
+                try
+                {
+                    string strClientFilePath = Path.Combine(WpfClientInfo.UserTempDir, "~photo");
+                    File.WriteAllBytes(strClientFilePath, imageData);
+
+                    string strMime = PathUtil.MimeTypeFrom(strClientFilePath);
+                    string strMetadata = LibraryChannel.BuildMetadata(strMime, Path.GetFileName(strClientFilePath));
+
+                    int nRet = UploadFile(
+                        channel,
+                        (Stop)null,
+                    strClientFilePath,
+                    object_path,
+                    strMetadata,
+                    "", // strStyle,
+                    _patron.Timestamp,
+                    true,
+                    false,
+                    (delegate_prompt)null,
+                    //(c, m, buttons, seconds) =>
+                    //{ },
+                    out byte[] output_timestamp,
+                    out string strError);
+                    if (nRet == -1)
+                        return new NormalResult { Value = -1, ErrorInfo = strError };
+                    return new NormalResult();
+                }
+                finally
+                {
+                    App.CurrentApp.ReturnChannel(channel);
+                }
+            });
+        }
+
+        #region 下级函数
+
+        // return:
+        //      "retry" "skip" 或 "cancel"
+        public delegate string delegate_prompt(LibraryChannel channel,
+            string message,
+            string[] buttons,
+            int seconds);
+
+        // 上传文件到到 dp2lbrary 服务器
+        // 注：已通过 prompt_func 实现通讯出错时候重试
+        // parameters:
+        //      timestamp   时间戳。如果为 null，函数会自动根据文件信息得到一个时间戳
+        //      bRetryOverwiteExisting   是否自动在时间戳不一致的情况下覆盖已经存在的服务器文件。== true，表示当发现时间戳不一致的时候，自动用返回的时间戳重试覆盖
+        // return:
+        //		-1	出错
+        //		0   上传文件成功
+        public static int UploadFile(
+            LibraryChannel channel,
+            Stop stop,
+            string strClientFilePath,
+            string strServerFilePath,
+            string strMetadata,
+            string strStyle,
+            byte[] timestamp,
+            bool bRetryOverwiteExisting,
+            bool bProgressChange,
+            delegate_prompt prompt_func,
+            out byte[] output_timestamp,
+            out string strError)
+        {
+            strError = "";
+            output_timestamp = null;
+
+            string strResPath = strServerFilePath;
+
+            // 只修改 metadata
+            if (string.IsNullOrEmpty(strClientFilePath) == true)
+            {
+                long lRet = channel.SaveResObject(
+stop,
+strResPath,
+null, // strClientFilePath,
+-1, // 0, // 0 是 bug，会导致清除原有对象内容 2018/8/13
+strMetadata,
+"",
+timestamp,
+strStyle,
+out output_timestamp,
+out strError);
+                timestamp = output_timestamp;
+                if (lRet == -1)
+                    return -1;
+                return 0;
+            }
+
+            long skip_offset = 0;
+
+            {
+                REDO_DETECT:
+                // 先检查以前是否有已经上传的局部
+                long lRet = channel.GetRes(stop,
+                    strServerFilePath,
+                    0,
+                    0,
+                    "uploadedPartial",
+                    out byte[] temp_content,
+                    out string temp_metadata,
+                    out string temp_outputPath,
+                    out byte[] temp_timestamp,
+                    out strError);
+                if (lRet == -1)
+                {
+                    if (channel.ErrorCode == DigitalPlatform.LibraryClient.localhost.ErrorCode.NotFound)
+                    {
+                        // 以前上传的局部不存在，说明只能从头上传
+                        skip_offset = 0;
+                    }
+                    else
+                    {
+                        // 探测过程通讯或其他出错
+                        if (prompt_func != null)
+                        {
+                            if (stop != null && stop.State != 0)
+                            {
+                                strError = "用户中断";
+                                return -1;
+                            }
+
+                            string action = prompt_func(channel,
+                                strError + "\r\n\r\n(重试) 重试操作; (中断) 中断处理",
+                                new string[] { "重试", "中断" },
+                                10);
+                            if (action == "重试")
+                                goto REDO_DETECT;
+                            if (action == "中断")
+                                return -1;
+                        }
+                        return -1;
+                    }
+                }
+                else if (lRet > 0)
+                {
+                    // *** 发现以前存在 lRet 这么长的已经上传部分
+                    long local_file_length = FileUtil.GetFileLength(strClientFilePath);
+                    // 本地文件尺寸居然小于已经上传的临时部分
+                    if (local_file_length < lRet)
+                    {
+                        // 只能从头上传
+                        skip_offset = 0;
+                    }
+                    else
+                    {
+                        // 询问是否断点续传
+                        if (prompt_func != null)
+                        {
+                            string percent = StringUtil.GetPercentText(lRet, local_file_length);
+                            string action = prompt_func(null,
+                                $"本地文件 {strClientFilePath} 以前曾经上传过长度为 {lRet} 的部分内容(占整个文件 {percent})，请问现在是否继续上传余下部分? \r\n[是]从断点位置开始继续上传; [否]从头开始上传; [中断]取消这个文件的上传",
+                                new string[] { "是", "否", "中断" },
+                                0);
+                            if (action == "是")
+                                skip_offset = lRet;
+                            else if (action == "否")
+                                skip_offset = 0;
+                            else
+                            {
+                                strError = "取消处理";
+                                return -1;
+                            }
+                        }
+                        // 如果 prompt_func 为 null 那就不做断点续传，效果是从头开始上传
+                    }
+                }
+            }
+
+            // 检测文件尺寸
+            FileInfo fi = new FileInfo(strClientFilePath);
+            if (fi.Exists == false)
+            {
+                strError = "文件 '" + strClientFilePath + "' 不存在...";
+                return -1;
+            }
+
+            string[] ranges = null;
+
+            if (fi.Length == 0)
+            {
+                // 空文件
+                ranges = new string[1];
+                ranges[0] = "";
+            }
+            else
+            {
+                string strRange = "";
+                strRange = $"{skip_offset}-{(fi.Length - 1)}";
+
+                // 按照100K作为一个chunk
+                // TODO: 实现滑动窗口，根据速率来决定chunk尺寸
+                ranges = RangeList.ChunkRange(strRange,
+                    channel.UploadResChunkSize // 500 * 1024
+                    );
+                if (bProgressChange && stop != null)
+                    stop.SetProgressRange(0, fi.Length);
+            }
+
+            if (timestamp == null)
+                timestamp = FileUtil.GetFileTimestamp(strClientFilePath);
+
+            // byte[] output_timestamp = null;
+
+            string strWarning = "";
+
+            TimeSpan old_timeout = channel.Timeout;
+            try
+            {
+                using (FileStream stream = File.OpenRead(strClientFilePath))
+                {
+                    for (int j = 0; j < ranges.Length; j++)
+                    {
+                        if (stop != null && stop.State != 0)
+                        {
+                            strError = "用户中断";
+                            return -1;
+                        }
+
+                        string range = ranges[j];
+
+                        string strWaiting = "";
+                        if (j == ranges.Length - 1)
+                        {
+                            strWaiting = " 请耐心等待...";
+                            channel.Timeout = new TimeSpan(0, 40, 0);   // 40 分钟
+                        }
+
+                        string strPercent = "";
+                        RangeList rl = new RangeList(range);
+                        if (rl.Count != 1)
+                        {
+                            strError = $"{range} 中只应包含一个连续范围";
+                            return -1;
+                        }
+
+                        {
+                            double ratio = (double)((RangeItem)rl[0]).lStart / (double)fi.Length;
+                            strPercent = String.Format("{0,3:N}", ratio * (double)100) + "%";
+                        }
+
+                        if (stop != null)
+                        {
+                            stop.SetMessage( // strMessagePrefix + 
+                                "正在上载 " + range + "/"
+                                + StringUtil.GetLengthText(fi.Length)
+                                + " " + strPercent + " " + strClientFilePath + strWarning + strWaiting);
+                            if (bProgressChange && rl.Count > 0)
+                                stop.SetProgressValue(rl[0].lStart);
+                        }
+
+                        // 2019/6/23
+                        StreamUtil.FastSeek(stream, rl[0].lStart);
+
+                        int nRedoCount = 0;
+                        long save_pos = stream.Position;
+                        REDO:
+                        // 2019/6/21
+                        // 如果是重做，文件指针要回到合适位置
+                        if (stream.Position != save_pos)
+                            StreamUtil.FastSeek(stream, save_pos);
+
+                        long lRet = channel.SaveResObject(
+        stop,
+        strResPath,
+        stream, // strClientFilePath,
+        -1,
+        j == ranges.Length - 1 ? strMetadata : null,    // 最尾一次操作才写入 metadata
+        range,
+        // j == ranges.Length - 1 ? true : false,	// 最尾一次操作，提醒底层注意设置特殊的WebService API超时时间
+        timestamp,
+        strStyle,
+        out output_timestamp,
+        out strError);
+                        //if (channel.ErrorCode == DigitalPlatform.LibraryClient.localhost.ErrorCode.TimestampMismatch)
+                        //    strError = $"{strError}。timestamp={ByteArray.GetHexTimeStampString(timestamp)},output_timestamp={ByteArray.GetHexTimeStampString(output_timestamp)}。parsed:{ParseTimestamp(timestamp)};{ParseTimestamp(output_timestamp)}";
+
+                        // Debug.WriteLine($"parsed:{ParseTimestamp(timestamp)};{ParseTimestamp(output_timestamp)}");
+
+                        timestamp = output_timestamp;
+
+                        strWarning = "";
+
+                        if (lRet == -1)
+                        {
+                            // 如果是第一个 chunk，自动用返回的时间戳重试一次覆盖
+                            if (bRetryOverwiteExisting == true
+                                && j == 0
+                                && channel.ErrorCode == DigitalPlatform.LibraryClient.localhost.ErrorCode.TimestampMismatch
+                                && nRedoCount == 0)
+                            {
+                                nRedoCount++;
+                                goto REDO;
+                            }
+
+                            if (prompt_func != null)
+                            {
+                                if (stop != null && stop.State != 0)
+                                {
+                                    strError = "用户中断";
+                                    return -1;
+                                }
+
+                                string action = prompt_func(channel,
+                                    strError + "\r\n\r\n(重试) 重试操作; (中断) 中断处理",
+                                    new string[] { "重试", "中断" },
+                                    10);
+                                if (action == "重试")
+                                    goto REDO;
+                                if (action == "中断")
+                                    return -1;
+                            }
+                            return -1;
+                        }
+                    }
+                }
+
+            }
+            catch (Exception ex)
+            {
+                strError = "UploadFile() 出现异常: " + ExceptionUtil.GetDebugText(ex);
+                return -1;
+            }
+            finally
+            {
+                channel.Timeout = old_timeout;
+            }
+
+            return 0;
+        }
+
+
+        #endregion
+
+        // 删除头像 object 的 dprms:file 元素
+        // return:
+        //      false   没有发生修改
+        //      true    发生了修改
+        static bool RemoveCardPhotoObject(XmlDocument readerdom,
+string usage)
+        {
+            XmlNamespaceManager nsmgr = new XmlNamespaceManager(new NameTable());
+            nsmgr.AddNamespace("dprms", DpNs.dprms);
+
+            XmlElement file = readerdom.DocumentElement.SelectSingleNode($"//dprms:file[@usage='{usage}']", nsmgr) as XmlElement;
+            if (file == null)
+                return false;
+
+            file.ParentNode.RemoveChild(file);
+            return true;
+        }
+
+        static bool GetCardPhotoObjectPath(XmlDocument readerdom,
+    string usage,
+    string strRecPath,
+    out string object_path)
+        {
+            object_path = "";
+
+            bool changed = false;
+            XmlNamespaceManager nsmgr = new XmlNamespaceManager(new NameTable());
+            nsmgr.AddNamespace("dprms", DpNs.dprms);
+
+            XmlElement file = readerdom.DocumentElement.SelectSingleNode($"//dprms:file[@usage='{usage}']", nsmgr) as XmlElement;
+            if (file == null)
+            {
+
+                file = readerdom.CreateElement("file", DpNs.dprms);
+                readerdom.DocumentElement.AppendChild(file);
+                file.SetAttribute("usage", "face");
+                changed = true;
+            }
+
+            string strID = file.GetAttribute("id");
+            if (string.IsNullOrEmpty(strID) == true)
+            {
+                // 寻找一个没有被用过的 id，创建一个新的 dprms:file 元素
+                List<string> id_list = new List<string>();
+                XmlNodeList ids = readerdom.DocumentElement.SelectNodes("//dprms:file/@id", nsmgr);
+                foreach (XmlNode id in ids)
+                {
+                    id_list.Add(id.Value);
+                }
+
+                strID = GetNewID(id_list);
+                file.SetAttribute("id", strID);
+                changed = true;
+            }
+
+            string strResPath = strRecPath + "/object/" + strID;
+            object_path = strResPath.Replace(":", "/");
+            return changed;
+        }
+
+        // 获得一个没有用过的数字 ID
+        public static string GetNewID(List<string> ids)
+        {
+            int nSeed = 0;
+            string strID = "";
+            for (; ; )
+            {
+                strID = Convert.ToString(nSeed++);
+                if (ids.IndexOf(strID) == -1)
+                    return strID;
+            }
+        }
+
+        private void VideoRegister_Closed(object sender, EventArgs e)
+        {
+            FaceManager.CancelGetFeatureString();
+            _stopVideo = true;
+            RemoveLayer();
+        }
+
+        async Task<GetFeatureStringResult> GetFeatureString(string style)
+        {
+            EnableControls(false);
+            try
+            {
+                return await Task.Run<GetFeatureStringResult>(() =>
+                {
+                    return FaceManager.GetFeatureString(null, "", style);
+                });
+            }
+            finally
+            {
+                EnableControls(true);
+            }
+        }
+
+        private async void DeleteFace_Click(object sender, RoutedEventArgs e)
+        {
+            await RegisterFace("deleteFace");
+        }
+
+        void PatronClear()
+        {
+            _patron.Clear();
+
+            if (!Application.Current.Dispatcher.CheckAccess())
+                Application.Current.Dispatcher.Invoke(new Action(() =>
+                {
+                    this.patronControl.BorrowedEntities.Clear();
+                }));
+            else
+                this.patronControl.BorrowedEntities.Clear();
+        }
     }
 }

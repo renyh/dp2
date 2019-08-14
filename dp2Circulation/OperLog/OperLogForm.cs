@@ -30,6 +30,8 @@ using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.Core;
 using DigitalPlatform.LibraryServer;
+using dp2Circulation.OperLog;
+using static dp2Circulation.OperLog.OperLogReport;
 
 namespace dp2Circulation
 {
@@ -373,12 +375,16 @@ namespace dp2Circulation
             return -1;
         }
 
+        bool _processing = false;
+
         /// <summary>
         /// 允许或者禁止界面控件。在长操作前，一般需要禁止界面控件；操作完成后再允许
         /// </summary>
         /// <param name="bEnable">是否允许界面控件。true 为允许， false 为禁止</param>
         public override void EnableControls(bool bEnable)
         {
+            _processing = !bEnable;
+
             this.comboBox_quickSetFilenames.Enabled = bEnable;
 
             this.textBox_logFileName.Enabled = bEnable;
@@ -483,6 +489,8 @@ namespace dp2Circulation
                 nRet = GetSetUserString(dom, out strHtml, out strError);
             else if (strOperation == "manageDatabase")
                 nRet = GetManageDatabaseString(dom, out strHtml, out strError);
+            else if (strOperation == "statis")
+                nRet = GetStatisString(dom, out strHtml, out strError);
             else
             {
                 strError = "未知的操作类型 '" + strOperation + "'";
@@ -1140,6 +1148,78 @@ namespace dp2Circulation
 
                 BuildHtmlEncodedLine("操作前的读者记录", strOldReaderRecPath, strOldReaderRecordHtml) +
                 BuildHtmlEncodedLine("操作后的读者记录", strReaderRecPath, strReaderRecordHtml) +
+
+                BuildHtmlLine("操作者", strOperator) +
+                BuildHtmlLine("操作时间", strOperTime) +
+                BuildClientAddressLine(dom) +
+                "</table>";
+
+            return 0;
+        }
+
+        // Statis
+        int GetStatisString(XmlDocument dom,
+    out string strHtml,
+    out string strError)
+        {
+            strHtml = "";
+            strError = "";
+            int nRet = 0;
+
+            string strLibraryCode = DomUtil.GetElementText(dom.DocumentElement, "libraryCode", out XmlNode node);
+            if (node != null && string.IsNullOrEmpty(strLibraryCode) == true)
+                strLibraryCode = "<空>";
+
+            string strOperation = DomUtil.GetElementText(dom.DocumentElement, "operation");
+            string strAction = DomUtil.GetElementText(dom.DocumentElement, "action");
+
+            string strOperator = DomUtil.GetElementText(dom.DocumentElement, "operator");
+            string strOperTime = GetRfc1123DisplayString(
+                DomUtil.GetElementText(dom.DocumentElement, "operTime"));
+
+            string type = DomUtil.GetElementText(dom.DocumentElement,
+                "type");
+            string uid = DomUtil.GetElementText(dom.DocumentElement,
+    "uid");
+            string strBarcode = DomUtil.GetElementText(dom.DocumentElement,
+                "itemBarcode");
+            string strLocation = DomUtil.GetElementText(dom.DocumentElement,
+                "itemLocation");
+            string strRefID = DomUtil.GetElementText(dom.DocumentElement,
+                "itemRefID");
+            string strTagProtocol = DomUtil.GetElementText(dom.DocumentElement,
+                "tagProtocol");
+            string strTagReaderName = DomUtil.GetElementText(dom.DocumentElement,
+                "tagReaderName");
+            string strTagAFI = DomUtil.GetElementText(dom.DocumentElement,
+    "tagAFI");
+            string strTagBlockSize = DomUtil.GetElementText(dom.DocumentElement,
+"tagBlockSize");
+            string strTagMaxBlockCount = DomUtil.GetElementText(dom.DocumentElement,
+"tagMaxBlockCount");
+            string strTagDSFID = DomUtil.GetElementText(dom.DocumentElement,
+"tagDSFID");
+            string strTagUID = DomUtil.GetElementText(dom.DocumentElement,
+"tagUID");
+            string strTagBytes = DomUtil.GetElementText(dom.DocumentElement,
+"tagBytes");
+
+            strHtml =
+                "<table class='operlog'>" +
+                BuildHtmlLine("操作类型", strOperation + " -- 统计信息") +
+                BuildHtmlLine("动作", strAction + " -- " + GetActionName(strOperation, strAction)) +
+                BuildHtmlLine("UID", uid) +
+                BuildHtmlLine("类型", type) +
+                BuildHtmlLine("册条码号", strBarcode) +
+                BuildHtmlLine("馆藏地", strLocation) +
+                BuildHtmlLine("册参考 ID", strRefID) +
+                BuildHtmlLine("标签协议", strTagProtocol) +
+                BuildHtmlLine("读卡器名", strTagReaderName) +
+                BuildHtmlLine("AFI", strTagAFI) +
+                BuildHtmlLine("块尺寸", strTagBlockSize) +
+                BuildHtmlLine("最大块数", strTagMaxBlockCount) +
+                BuildHtmlLine("DSFID", strTagDSFID) +
+                BuildHtmlLine("标签数据区", strTagBytes) +
 
                 BuildHtmlLine("操作者", strOperator) +
                 BuildHtmlLine("操作时间", strOperTime) +
@@ -2135,6 +2215,12 @@ DomUtil.GetElementInnerXml(dom.DocumentElement, "deletedCommentRecords"));
                     return "初始化数据库";
                 if (strAction == "refreshDatabase")
                     return "刷新数据库定义";
+            }
+
+            if (strOperation == "statis")
+            {
+                if (strAction == "writeRfidTag")
+                    return "写入 RFID 标签";
             }
 
             return strAction;
@@ -5610,10 +5696,10 @@ FileShare.ReadWrite))
             menuItem.Click += new System.EventHandler(this.menu_find_Click);
             contextMenu.MenuItems.Add(menuItem);
 
-
             menuItem = new MenuItem("筛选(&I) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_filter_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
@@ -5631,23 +5717,32 @@ FileShare.ReadWrite))
 
             menuItem = new MenuItem("导出到 XML 文件(&E) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_exportXml_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
             menuItem = new MenuItem("导出附件(&A) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_exportAttachment_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
 
             menuItem = new MenuItem("导出 amerce 操作信息到 Excel 文件(&E) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_exportAmerceExcel_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
+            menuItem = new MenuItem("导出 RFID 标签写入 操作信息到 Excel 文件(&E) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
+            menuItem.Click += new System.EventHandler(this.menu_exportRfidWriteExcel_Click);
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
+                menuItem.Enabled = false;
+            contextMenu.MenuItems.Add(menuItem);
 
             // ---
             menuItem = new MenuItem("-");
@@ -5656,13 +5751,15 @@ FileShare.ReadWrite))
 
             menuItem = new MenuItem("打印解释内容(&P) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_printHtml_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
             menuItem = new MenuItem("补做 SetBiblioInfo-move (&M) [" + this.listView_records.SelectedItems.Count.ToString() + "]");
             menuItem.Click += new System.EventHandler(this.menu_redoSetBiblioInfoMove_Click);
-            if (this.listView_records.SelectedItems.Count == 0)
+            if (this.listView_records.SelectedItems.Count == 0
+                || this._processing == true)
                 menuItem.Enabled = false;
             contextMenu.MenuItems.Add(menuItem);
 
@@ -6068,6 +6165,95 @@ MessageBoxDefaultButton.Button1);
 
                 writer.WriteEndElement();   // </collection>
                 writer.WriteEndDocument();
+            }
+            return;
+            ERROR1:
+            MessageBox.Show(this, strError);
+        }
+
+        // 导出 写入 RFID 统计信息到 Excel 文件
+        void menu_exportRfidWriteExcel_Click(object sender, EventArgs e)
+        {
+            string strError = "";
+
+            // 询问文件名
+            SaveFileDialog dlg = new SaveFileDialog();
+
+            dlg.Title = "请指定要创建的 Excel 文件名";
+            dlg.CreatePrompt = false;
+            dlg.OverwritePrompt = true;
+            dlg.FileName = "";
+            dlg.Filter = "Excel 文件 (*.xlsx)|*.xlsx|All files (*.*)|*.*";
+
+            dlg.RestoreDirectory = true;
+
+            if (dlg.ShowDialog() != DialogResult.OK)
+                return;
+
+            XLWorkbook doc = null;
+            try
+            {
+                doc = new XLWorkbook(XLEventTracking.Disabled);
+                File.Delete(dlg.FileName);
+            }
+            catch (Exception ex)
+            {
+                strError = "OperLogForm new XLWorkbook() exception: " + ExceptionUtil.GetAutoText(ex);
+                goto ERROR1;
+            }
+
+            IXLWorksheet sheet = doc.Worksheets.Add("基本");
+            IXLWorksheet sheet1 = doc.Worksheets.Add("统计");
+
+            bool bLaunchExcel = true;
+            try
+            {
+                List<RfidWriteInfo> lines = new List<RfidWriteInfo>();
+                int nRet = ProcessSelectedRecords((date, index, dom, timestamp) =>
+                {
+                    if (dom.DocumentElement != null)
+                    {
+                        string operation = DomUtil.GetElementText(dom.DocumentElement, "operation");
+                        string action = DomUtil.GetElementText(dom.DocumentElement, "action");
+                        if (operation != "statis" || action != "writeRfidTag")
+                            return true;
+                        lines.Add(RfidWriteInfo.Build(date, index, dom));
+                    }
+
+                    return true;
+                },
+                    out strError);
+                if (nRet == -1)
+                    goto ERROR1;
+
+                //
+                OperLogReport.BuildRfidWriteReport(lines, sheet, out List<KeyStatisLine> lines1);
+
+                // 输出日统计表。
+                OperLogReport.BuildRfidStatisSheet(
+        lines1,
+        sheet1,
+        out List<DateStatisLine> lines2);
+            }
+            finally
+            {
+                if (doc != null)
+                {
+                    doc.SaveAs(dlg.FileName);
+                    doc.Dispose();
+                }
+
+                if (bLaunchExcel)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(dlg.FileName);
+                    }
+                    catch
+                    {
+
+                    }
+                }
             }
             return;
             ERROR1:
@@ -6514,14 +6700,13 @@ MessageBoxDefaultButton.Button1);
                     string strLogFileName = ListViewUtil.GetItemText(item, COLUMN_FILENAME);
                     string strIndex = ListViewUtil.GetItemText(item, COLUMN_INDEX);
 
-                    string strXml = "";
                     // 从服务器获得
                     // return:
                     //      -1  出错
                     //      0   正常
                     //      1   用户中断
                     int nRet = GetXml(item,
-            out strXml,
+            out string strXml,
             out strError);
                     if (nRet == 1)
                         return -1;
@@ -8878,7 +9063,7 @@ MessageBoxDefaultButton.Button1);
                         }
 
                         DialogResult result = MessageBox.Show(this,
-"保存书目记录 " + strBiblioRecPath + " 时出错: " + strError + "。\r\n\r\n请问是否重试保存操作? \r\n\r\n(Yes 重试保存；\r\nNo 放弃保存、但继续处理后面的记录保存; \r\nCancel 中断整批保存操作)",
+$"保存{data.DbType}记录 {strBiblioRecPath} 时出错: {strError}。\r\n\r\n请问是否重试保存操作? \r\n\r\n(Yes 重试保存；\r\nNo 放弃保存、但继续处理后面的记录保存; \r\nCancel 中断整批保存操作)",
 "OperLogForm",
 MessageBoxButtons.YesNoCancel,
 MessageBoxIcon.Question,
@@ -9244,6 +9429,7 @@ MessageBoxDefaultButton.Button1);
                 loader.CacheDir = "";
                 loader.Filter = GetFilter(types);   // "setBiblioInfo";
 
+                _hide_dialog = false;
                 loader.Prompt -= new MessagePromptEventHandler(loader_Prompt);
                 loader.Prompt += new MessagePromptEventHandler(loader_Prompt);
 
@@ -9424,7 +9610,36 @@ MessageBoxDefaultButton.Button1);
                     if (isClipped)
                     {
                         string old_xml = GetCurrentRecordXml(strBiblioRecPath);
+
+                        if (string.IsNullOrEmpty(old_xml))
+                        {
+                            REDO_INPUT:
+                            // TODO: 请求操作者提供一条起始记录。可以提供一种选项，让程序试探从当前读者库中获取这条记录
+                            string result = EditDialog.GetInput(this,
+    "请指定读者记录的起始内容状态",
+    "读者记录 XML",
+    strXml,
+    this.Font);
+                            if (result == null)
+                                throw new Exception("放弃恢复");
+                            // TODO: 检查输入的记录的正确性
+                            XmlDocument temp = new XmlDocument();
+                            try
+                            {
+                                temp.LoadXml(result);
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show(this, $"输入的记录 XML 格式不正确: {ex.Message}。请重新输入");
+                                goto REDO_INPUT;
+                            }
+
+                            old_xml = result;
+                        }
+
+
                         XmlDocument existing_dom = new XmlDocument();
+
                         existing_dom.LoadXml(string.IsNullOrEmpty(old_xml) ? strXml : old_xml);
                         // TODO: 去掉 borrows/@clipping 属性
                         RemoveClippedElement(existing_dom);
@@ -9649,6 +9864,47 @@ MessageBoxDefaultButton.Button1);
             }
         }
 
+        bool _hide_dialog = false;
+        int _hide_dialog_count = 0;
+
+        private void loader_Prompt(object sender, MessagePromptEventArgs e)
+        {
+            // TODO: 不再出现此对话框。不过重试有个次数限制，同一位置失败多次后总要出现对话框才好
+            if (e.Actions == "yes,no,cancel")
+            {
+                DialogResult result = DialogResult.Yes;
+                if (_hide_dialog == false)
+                {
+                    this.Invoke((Action)(() =>
+                    {
+                        result = MessageDialog.Show(this,
+                    e.MessageText + "\r\n\r\n(重试) 重试操作;(跳过) 跳过本条继续处理后面的书目记录; (中断) 中断处理",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxDefaultButton.Button1,
+                    "此后不再出现本对话框",
+                    ref _hide_dialog,
+                    new string[] { "重试", "跳过", "中断" },
+                    10);
+                    }));
+                    _hide_dialog_count = 0;
+                }
+                else
+                {
+                    _hide_dialog_count++;
+                    if (_hide_dialog_count > 10)
+                        _hide_dialog = false;
+                }
+
+                if (result == DialogResult.Yes)
+                    e.ResultAction = "yes";
+                else if (result == DialogResult.Cancel)
+                    e.ResultAction = "cancel";
+                else
+                    e.ResultAction = "no";
+            }
+        }
+
+#if REMOVED
         void loader_Prompt(object sender, MessagePromptEventArgs e)
         {
             // TODO: 不再出现此对话框。不过重试有个次数限制，同一位置失败多次后总要出现对话框才好
@@ -9668,6 +9924,7 @@ MessageBoxDefaultButton.Button1);
                     e.ResultAction = "no";
             }
         }
+#endif
 
         private void listView_restoreList_SelectedIndexChanged(object sender, EventArgs e)
         {
@@ -9843,11 +10100,10 @@ strHtml2 +
                 ListViewUtil.ChangeItemText(item, COLUMN_INDEX, history_item.Index.ToString());
                 this.listView_recover_history.Items.Add(item);
                 item.Tag = info;
-                string strError = "";
                 int nRet = FillListViewItem(item,
                     history_item.Xml,
                     0,  // lAttachmentTotalLength,
-                    out strError);
+                    out string strError);
                 if (nRet == -1)
                     ListViewUtil.ChangeItemText(item, 1, strError);
             }

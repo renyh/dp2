@@ -1,5 +1,4 @@
-﻿using DigitalPlatform.Core;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -7,6 +6,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Controls;
+
+using DigitalPlatform.Core;
 
 namespace dp2SSL
 {
@@ -131,6 +132,82 @@ Description = "人脸接口 URL 地址"
             set
             {
                 _config.Set("global", "faceUrl", value);
+            }
+        }
+
+        // 默认值 true
+        [Display(
+Order = 7,
+Name = "启动时全屏",
+Description = "程序启动时候是否自动全屏"
+)]
+        [Category("启动")]
+        public bool FullScreen
+        {
+            get
+            {
+                return _config.GetInt("global", "fullScreen", 1) == 1 ? true : false;
+            }
+            set
+            {
+                _config.SetInt("global", "fullScreen", value == true ? 1 : 0);
+            }
+        }
+
+        // 默认值 false
+        [Display(
+Order = 7,
+Name = "借还按钮自动触发",
+Description = "借书和还书操作是否自动触发操作按钮"
+)]
+        [Category("操作风格")]
+        public bool AutoTrigger
+        {
+            get
+            {
+                return _config.GetBoolean("operation", "auto_trigger", false);
+            }
+            set
+            {
+                _config.SetBoolean("operation", "auto_trigger", value);
+            }
+        }
+
+        // 默认值 true
+        [Display(
+Order = 8,
+Name = "监控相关进程",
+Description = "自动监控和重启 人脸中心 RFID中心 指纹中心等模块"
+)]
+        [Category("维护")]
+        public bool ProcessMonitor
+        {
+            get
+            {
+                return _config.GetBoolean("global", "process_monitor", true);
+            }
+            set
+            {
+                _config.SetBoolean("global", "process_monitor", value);
+            }
+        }
+
+        // 默认值 空
+        [Display(
+Order = 9,
+Name = "馆藏地",
+Description = "智能书架内的图书的专属馆藏地"
+)]
+        [Category("智能书架")]
+        public string ShelfLocation
+        {
+            get
+            {
+                return _config.Get("shelf", "location", "");
+            }
+            set
+            {
+                _config.Set("shelf", "location", value);
             }
         }
 

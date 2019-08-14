@@ -1583,6 +1583,7 @@ namespace DigitalPlatform.LibraryServer
                         ref itemdom,
                         bForce,
                         sessioninfo.UserID,
+                        sessioninfo.Account?.Location,
                         strOutputItemRecPath,
                         strOutputReaderRecPath,
                         ref domOperLog,
@@ -1743,10 +1744,9 @@ namespace DigitalPlatform.LibraryServer
                     }
 
                     // 记载读者记录
-                    bool bClipped = false;
                     XmlNode node = DomUtil.SetElementText(domOperLog.DocumentElement,
                         "readerRecord",
-                        ClipReaderXml(readerdom, out bClipped)
+                        ClipReaderXml(readerdom, out bool bClipped)
                         // readerdom.OuterXml
                         );
                     DomUtil.SetAttr(node, "recPath", strOutputReaderRecPath);
@@ -4723,6 +4723,8 @@ account == null ? null : new AccountRecord(account));
                 return "读过";
             else if (strAction == "boxing")
                 return "配书";
+            else if (strAction == "transfer")
+                return "调拨";
             else
                 return strAction;
         }
@@ -4737,7 +4739,7 @@ account == null ? null : new AccountRecord(account));
         // API: 还书
         // 权限：  工作人员需要return权限，如果是丢失处理需要lost权限；所有读者均不具备还书操作权限。盘点需要 inventory 权限
         // parameters:
-        //      strAction   return/lost/inventory/read/boxing 分别是 还书/丢失/盘点/读过/配书
+        //      strAction   return/lost/inventory/read/boxing/transfer 分别是 还书/丢失/盘点/读过/配书/典藏移交
         //                  配书，是指图书馆员为读者预先准备好被预约的图书，从书库取出放到特定的书架或者盒子中，等读者来了立刻可以取走
         //      strReaderBarcodeParam   读者证条码号。当 strAction 为 "inventory" 时，这里是批次号
         // return:
@@ -4821,6 +4823,17 @@ account == null ? null : new AccountRecord(account));
                     // return result;
                 }
             }
+            else if (strAction == "transfer")
+            {
+                // 权限字符串
+                if (StringUtil.IsInList("setentities,setiteminfo", sessioninfo.RightsOrigin) == false)
+                {
+                    result.Value = -1;
+                    result.ErrorInfo = strActionName + " 操作被拒绝。不具备 setentities (或 setiteminfo)权限。";
+                    result.ErrorCode = ErrorCode.AccessDenied;
+                    // return result;
+                }
+            }
             else if (strAction == "read")
             {
                 // 权限字符串
@@ -4891,7 +4904,7 @@ account == null ? null : new AccountRecord(account));
             }
 
             string strBatchNo = "";
-            if (strAction == "inventory")
+            if (strAction == "inventory" || strAction == "transfer")
             {
                 strBatchNo = strReaderBarcodeParam; // 为避免判断发生混乱，后面统一用 strBatchNo 存储批次号
                 strReaderBarcodeParam = "";
@@ -4913,7 +4926,6 @@ account == null ? null : new AccountRecord(account));
 
             if (string.IsNullOrEmpty(strReaderBarcode) == false)
             {
-                string strOutputCode = "";
                 // 把二维码字符串转换为读者证条码号
                 // parameters:
                 //      strReaderBcode  [out]读者证条码号
@@ -4922,7 +4934,7 @@ account == null ? null : new AccountRecord(account));
                 //      0       所给出的字符串不是读者证号二维码
                 //      1       成功      
                 nRet = this.DecodeQrCode(strReaderBarcode,
-                    out strOutputCode,
+                    out string strOutputCode,
                     out strError);
                 if (nRet == -1)
                     goto ERROR1;
@@ -4982,7 +4994,7 @@ account == null ? null : new AccountRecord(account));
                 sessioninfo,
                 strActionName,
                 time_lines,
-                strAction != "inventory",
+                strAction != "inventory" && strAction != "transfer",
                 ref strReaderBarcode,
                 ref strIdcardNumber,
                 ref strLibraryCode,
@@ -5368,7 +5380,7 @@ account == null ? null : new AccountRecord(account));
                     // 2008/6/4
                     string strItemDbName = "";
                     bool bItemDbInCirculation = true;
-                    if (strAction != "inventory")
+                    if (strAction != "inventory" && strAction != "transfer")
                     {
                         if (String.IsNullOrEmpty(strOutputItemRecPath) == false)
                         {
@@ -5538,7 +5550,7 @@ account == null ? null : new AccountRecord(account));
                                 out strError);
                         }
 
-                        if (strAction == "inventory")
+                        if (strAction == "inventory" || strAction == "transfer")
                         {
                             if (nRet == -1)
                             {
@@ -5618,17 +5630,12 @@ account == null ? null : new AccountRecord(account));
 
                         // 因为前面对于册记录一直没有加锁，所以这里锁定后要
                         // 检查时间戳，确保记录内容没有（实质性）改变
-                        byte[] temp_timestamp = null;
-                        string strTempOutputPath = "";
-                        string strTempItemXml = "";
-                        string strMetaData = "";
-
                         lRet = channel.GetRes(
                             strOutputItemRecPath,
-                            out strTempItemXml,
-                            out strMetaData,
-                            out temp_timestamp,
-                            out strTempOutputPath,
+                            out string strTempItemXml,
+                            out string strMetaData,
+                            out byte[] temp_timestamp,
+                            out string strTempOutputPath,
                             out strError);
                         if (lRet == -1)
                         {
@@ -5640,9 +5647,8 @@ account == null ? null : new AccountRecord(account));
                         if (ByteArray.Compare(item_timestamp, temp_timestamp) != 0)
                         {
                             // 装载新记录进入DOM
-                            XmlDocument temp_itemdom = null;
                             nRet = LibraryApplication.LoadToDom(strTempItemXml,
-                                out temp_itemdom,
+                                out XmlDocument temp_itemdom,
                                 out strError);
                             if (nRet == -1)
                             {
@@ -5704,7 +5710,7 @@ account == null ? null : new AccountRecord(account));
                     sessioninfo,
                     strActionName,
                     time_lines,
-                    strAction != "inventory",
+                    strAction != "inventory" && strAction != "transfer",
                     ref strReaderBarcode,
                     ref strIdcardNumber,
                     ref strLibraryCode,
@@ -5910,6 +5916,62 @@ account == null ? null : new AccountRecord(account));
                         goto END3;
                     }
 
+                    if (strAction == "transfer")
+                    {
+                        // 注意参数值里面的逗号和冒号在请求时候要处理为转义字符
+                        string strNewLocation = StringUtil.GetParameterByPrefix(strStyle, "location");
+
+                        if (string.IsNullOrEmpty(strNewLocation) == true && strNewLocation != null)
+                        {
+                            strError = "调拨去向的馆藏地不允许为空";
+                            goto ERROR1;
+                        }
+
+                        string strOldLocation = DomUtil.GetElementText(itemdom.DocumentElement,
+    "location");
+
+                        string strNewCurrentLocation = StringUtil.GetParameterByPrefix(strStyle, "currentLocation");
+                        // 执行典藏移交
+                        // return:
+                        //      -1  出错
+                        //      0   没有实质性修改
+                        //      1   发生了修改
+                        nRet = DoTransfer(
+                            sessioninfo,
+                            strAccessParameters,
+                            itemdom,
+                            strOutputItemRecPath,
+                            strBatchNo,
+                            strNewLocation,
+                            strNewCurrentLocation,
+                            out strError);
+                        if (nRet == -1)
+                            goto ERROR1;
+
+                        if (nRet == 0)
+                        {
+                            strError = $"册记录 {strOutputItemRecPath} 没有发生修改";
+                            goto ERROR1;
+                        }
+
+                        strOutputItemXml = itemdom.OuterXml;
+
+                        strOutputReaderXml = strOldReaderXml;   // strReaderXml;
+                        nRet = RemovePassword(ref strOutputReaderXml, out strError);
+                        if (nRet == -1)
+                        {
+                            strError = "从读者记录中去除 password 阶段出错: " + strError;
+                            goto ERROR1;
+                        }
+
+                        strBiblioRecID = DomUtil.GetElementText(itemdom.DocumentElement, "parent"); //
+
+                        SetReturnInfo(ref return_info, itemdom);
+                        // 同时返回修改前和修改后的 location 值
+                        return_info.Location = strOldLocation + "-->" + return_info.Location;
+                        goto END3;
+                    }
+
 #if NO
 
                     // 看看读者记录所从属的数据库，是否在参与流通的读者库之列
@@ -6053,14 +6115,13 @@ account == null ? null : new AccountRecord(account));
                     if (strAction != "read" && strAction != "boxing")
                     {
                         // 获得相关日历
-                        Calendar calendar = null;
                         // return:
                         //      -1  出错
                         //      0   没有找到日历
                         //      1   找到日历
                         nRet = GetReaderCalendar(strReaderType,
                             strLibraryCode,
-                            out calendar,
+                            out Calendar calendar,
                             out strError);
                         if (nRet == -1 || nRet == 0)
                             goto ERROR1;
@@ -6159,8 +6220,14 @@ account == null ? null : new AccountRecord(account));
                     Debug.Assert(string.IsNullOrEmpty(strReaderBarcode) == false, "");
                     DomUtil.SetElementText(domOperLog.DocumentElement, "readerBarcode",
                         strReaderBarcode);
-                    DomUtil.SetElementText(domOperLog.DocumentElement, "operator",
+                    XmlElement operator_node = DomUtil.SetElementText(domOperLog.DocumentElement, "operator",
                         sessioninfo.UserID);
+
+                    // 2019/8/4
+                    if (sessioninfo.Account != null
+                        && string.IsNullOrEmpty(sessioninfo.Account.Location) == false)
+                        operator_node?.SetAttribute("location", sessioninfo.Account?.Location);
+
                     DomUtil.SetElementText(domOperLog.DocumentElement, "operTime",
                         strOperTime);
 
@@ -6371,7 +6438,6 @@ account == null ? null : new AccountRecord(account));
                         this.WriteErrorLog("Return() 写入册记录 '" + strOutputItemRecPath + "' 时出错: " + strError);
 
                         // 要Undo刚才对读者记录的写入
-                        string strError1 = "";
                         lRet = channel.DoSaveTextRes(strOutputReaderRecPath,
                             strOldReaderXml,    // strReaderXml,
                             false,
@@ -6379,7 +6445,7 @@ account == null ? null : new AccountRecord(account));
                             reader_timestamp,
                             out output_timestamp,
                             out strOutputPath,
-                            out strError1);
+                            out string strError1);
                         if (lRet == -1)
                         {
                             // 2015/9/2
@@ -6925,13 +6991,12 @@ start_time_1,
                     // else if (String.Compare(strItemFormat, "text", true) == 0)
                     else if (IsResultType(strItemFormat, "text") == true)
                     {
-                        string strItemRecord = "";
                         nRet = this.ConvertItemXmlToHtml(
                             this.CfgDir + "\\itemxml2text.cs",
                             this.CfgDir + "\\itemxml2text.cs.ref",
                             strOutputItemXml,
                             strOutputItemRecPath,   // 2009/10/18
-                            out strItemRecord,
+                            out string strItemRecord,
                             out strError);
                         if (nRet == -1)
                         {
@@ -7254,14 +7319,112 @@ start_time_1,
             return "书目记录 '" + strBiblioRecPath + "' 卷 '" + strVolume + "'";
         }
 
+        // 执行典藏移交
+        // return:
+        //      -1  出错
+        //      0   没有实质性修改
+        //      1   发生了修改
+        int DoTransfer(
+    SessionInfo sessioninfo,
+    string strAccessParameters,
+    XmlDocument itemdom,
+    string strItemRecPath,
+    string strBatchNo,
+    string strNewLocation,
+    string strNewCurrentLocation,
+    out string strError)
+        {
+            strError = "";
+
+            XmlDocument new_itemdom = new XmlDocument();
+            new_itemdom.LoadXml(itemdom.OuterXml);
+
+            bool changed = false;
+
+            // 修改 location 元素
+            if (strNewLocation != null)
+            {
+                string old_location = DomUtil.GetElementText(new_itemdom.DocumentElement,
+                    "location");
+                if (old_location != strNewLocation)
+                {
+                    DomUtil.SetElementText(new_itemdom.DocumentElement,
+                        "location", strNewLocation);    // TODO: 注意保留 #reservation 部分
+                    changed = true;
+                }
+            }
+
+            if (strNewCurrentLocation != null)
+            {
+                string old_currentlocation = DomUtil.GetElementText(new_itemdom.DocumentElement,
+    "currentLocation");
+                if (old_currentlocation != strNewCurrentLocation)
+                {
+                    DomUtil.SetElementText(new_itemdom.DocumentElement,
+                        "currentLocation", strNewCurrentLocation);
+                    changed = true;
+                }
+            }
+
+            if (strBatchNo != null)
+            {
+                string old_batchno = DomUtil.GetElementText(new_itemdom.DocumentElement,
+"batchNo");
+                if (old_batchno != strBatchNo)
+                {
+                    DomUtil.SetElementText(new_itemdom.DocumentElement,
+                        "batchNo", strBatchNo);
+                    changed = true;
+                }
+            }
+
+            if (changed == false)
+                return 0;
+
+            List<EntityInfo> entity_list = new List<EntityInfo>();
+            EntityInfo info = new EntityInfo();
+            entity_list.Add(info);
+
+            info.Action = "transfer";
+            info.OldRecPath = strItemRecPath;
+            info.OldRecord = itemdom.OuterXml;
+            info.OldTimestamp = null;
+            info.NewRecPath = strItemRecPath;
+            info.NewRecord = new_itemdom.OuterXml;
+            info.Style = "dont_lock";
+
+            var result = this.SetEntities(sessioninfo,
+                "", // strBiblioRecPath,
+                entity_list.ToArray(),
+                out EntityInfo[] errorinfos);
+            if (result.Value == -1)
+            {
+                strError = result.ErrorInfo;
+                return -1;
+            }
+            foreach (var entity in errorinfos)
+            {
+                if (entity.ErrorCode != ErrorCodeValue.NoError)
+                {
+                    strError = entity.ErrorInfo;
+                    return -1;
+                }
+                // 修改后的册记录
+                itemdom.LoadXml(entity.NewRecord);
+                break;
+            }
+
+            return 1;
+        }
+
         // 执行盘点记载
         int DoInventory(
-            SessionInfo sessioninfo,
-            string strAccessParameters,
-            XmlDocument itemdom,
-            string strItemRecPath,
-            string strBatchNo,
-            out string strError)
+        SessionInfo sessioninfo,
+        string strAccessParameters,
+        XmlDocument itemdom,
+        string strItemRecPath,
+        string strBatchNo,
+        out string strError)
         {
             strError = "";
             int nRet = 0;
@@ -15893,6 +16056,7 @@ out string strError)
             ref XmlDocument itemdom,
             bool bForce,
             string strOperator,
+            string strAccountLocation,  // sessioninfo.Account.Location
             string strItemRecPath,
             string strReaderRecPath,
             ref XmlDocument domOperLog,
@@ -16519,8 +16683,12 @@ strBookPrice);    // 图书价格
                 DomUtil.SetElementText(domOperLog.DocumentElement, "lastReturningDate",
     strLastReturningDate);     // 上次应还日期
 
-            DomUtil.SetElementText(domOperLog.DocumentElement, "operator",
+            XmlElement operator_node = DomUtil.SetElementText(domOperLog.DocumentElement, "operator",
                 strOperator);   // 操作者
+                                // 2019/8/4
+            if (string.IsNullOrEmpty(strAccountLocation) == false)
+                operator_node?.SetAttribute("location", strAccountLocation);
+
             DomUtil.SetElementText(domOperLog.DocumentElement, "operTime",
                 strBorrowDate);   // 操作时间
 

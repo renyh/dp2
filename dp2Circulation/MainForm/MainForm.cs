@@ -311,6 +311,12 @@ namespace dp2Circulation
         /// </summary>
         public string LibraryName = "";
 
+        // 2019/6/27
+        /// <summary>
+        /// OPAC URL。例如 http://dp2003.com/opac/
+        /// </summary>
+        public string OpacServerUrl { get; set; }
+
         //
         internal ReaderWriterLock m_lockChannel = new ReaderWriterLock();
         internal static int m_nLockTimeout = 5000;	// 5000=5秒
@@ -803,6 +809,11 @@ Stack:
 
             if (this.AppInfo != null)
             {
+                // 2019/7/12
+                AppInfo.SetString("global",
+                    "currentLocation", 
+                    GetCurrentLocation());
+
                 // 消除短期保存的密码
                 bool bSavePasswordLong =
         AppInfo.GetBoolean(
@@ -1507,6 +1518,9 @@ Stack:
             {
                 dlg.ParamChanged -= new ParamChangedEventHandler(CfgDlg_ParamChanged);
             }
+
+            // 刷新框架窗工具条上的馆藏地列表
+            this.BeginInvoke(new Action(FillLibraryCodeListMenu));
 
             // 缺省字体发生了变化
             if (strOldDefaultFontString != this.DefaultFontString)
@@ -4918,7 +4932,7 @@ Stack:
         //      -1  出错
         //      0   不需要进行变换
         //      1   需要进行变换
-        public int NeedTranformBarcode(string strLibraryCode, 
+        public int NeedTransformBarcode(string strLibraryCode, 
             out string strError)
         {
             strError = "";
@@ -4958,6 +4972,8 @@ Stack:
                 return 0;
             }
 
+            // TODO: 需要考虑 RFID 读卡器发来的字符串形态
+
             // 2019/6/1
             // 优先用服务器传递到前端的条码校验规则来校验
             if (string.IsNullOrEmpty(this.BarcodeValidation) == false)
@@ -4966,11 +4982,14 @@ Stack:
                 {
                     var validator = new BarcodeValidator(this.BarcodeValidation);
                     if (strBarcode == "?transform")
-                        return validator.NeedValidate(strLibraryCode) == true ? 1 : 0;
+                        return validator.NeedTransform(strLibraryCode) == true ? 1 : 0;
 
                     var result = validator.Transform(strLibraryCode, strBarcode);
                     if (result.OK == false)
                     {
+                        // 2019/7/30
+                        if (result.ErrorCode == "suppressed")
+                            return 0;
                         strError = result.ErrorInfo;
                         return -1;
                     }
@@ -5079,6 +5098,8 @@ Stack:
                 strError = "这是读者证号二维码";
                 return 1;
             }
+
+            // TODO: 优先利用 BarcodeValidation 进行校验
 
             // 优先进行前端校验
             if (this.ClientHost != null)

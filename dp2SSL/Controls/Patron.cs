@@ -94,7 +94,7 @@ namespace dp2SSL
 
         string _state = null;
 
-        // 事项状态。borrowed/onshelf/空
+        // 事项状态。borrowed/onshelf/空，或者各种值的组合
         public string State
         {
             get
@@ -297,7 +297,24 @@ namespace dp2SSL
             }
         }
 
-        public void SetPatronXml(string recpath, string xml)
+        string _xml = "";
+        public string Xml
+        {
+            get
+            {
+                return _xml;
+            }
+            set
+            {
+                _xml = value;
+            }
+        }
+
+        public byte[] Timestamp { get; set; }
+
+        public string RecPath { get; set; }
+
+        public void SetPatronXml(string recpath, string xml, byte [] timestamp)
         {
             if (string.IsNullOrEmpty(xml))
             {
@@ -307,6 +324,10 @@ namespace dp2SSL
 
             XmlDocument dom = new XmlDocument();
             dom.LoadXml(xml);
+
+            RecPath = recpath;
+            _xml = xml;
+            Timestamp = timestamp;
 
             this.Barcode = DomUtil.GetElementText(dom.DocumentElement, "barcode");
 
@@ -350,6 +371,12 @@ namespace dp2SSL
         public void Fill(OneTag tag)
         {
             string pii = "";
+
+            if (tag.TagInfo == null && tag.Protocol == InventoryInfo.ISO15693)
+            {
+                throw new Exception("Fill() taginfo == null");
+            }
+
             if (tag.TagInfo != null && tag.Protocol == InventoryInfo.ISO15693)
             {
                 LogicChip chip = LogicChip.From(tag.TagInfo.Bytes,
@@ -376,6 +403,8 @@ namespace dp2SSL
             this.UID = null;
             this.PII = null;
             this.PhotoPath = "";
+
+            this.RecPath = "";
 
             this.SetNotEmpty();
         }

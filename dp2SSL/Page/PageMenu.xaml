@@ -5,14 +5,14 @@
       xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
       xmlns:local="clr-namespace:dp2SSL"
       mc:Ignorable="d" 
-      d:DesignHeight="450" d:DesignWidth="800"
       Background="Black"
+      d:DesignHeight="800" d:DesignWidth="800"
       WindowTitle="主菜单" Title="主菜单"
       >
     <Page.Resources>
         <local:StringToVisibilityConverter x:Key="StringToVis" />
     </Page.Resources>
-    <UniformGrid Width="500" Height="500">
+    <UniformGrid Width="500" Height="500" >
 
         <!--
         <Grid.ColumnDefinitions>
@@ -27,22 +27,41 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 -->
-        <Button Grid.Row="0" Grid.Column="0" 
+        <Button 
                 Name="borrowButton" Content="借书" Click="Button_Borrow_Click"
                 Background="DarkBlue" Foreground="White" FontSize="40" BorderThickness="0"/>
-        <Button Grid.Row="0" Grid.Column="1" 
+        <Button 
                 Name="returnButton" Content="还书" Click="ReturnButton_Click"
                 Background="BlueViolet" Foreground="White" FontSize="40" BorderThickness="0"/>
-        <Button Grid.Row="1" Grid.Column="0" 
+        <TextBlock Name="message"
+                   Text="message" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center"
+                   FontSize="16"
+                   MouseDown="Message_MouseDown"
+                   Background="Transparent" Foreground="White"/>
+        <Button  
                 Name="renewBotton" Content="续借" Click="RenewBotton_Click"
                 Background="CadetBlue" Foreground="White" FontSize="40" BorderThickness="0"/>
-        <Button Name="config" Grid.Row="1" Grid.Column="1" Content="设置"  Click="Config_Click"
-                Background="CornflowerBlue" Foreground="White" FontSize="40" BorderThickness="0"/>
-        <TextBlock Grid.ColumnSpan="2" Name="message"
-                   Text="message" TextAlignment="Center" MouseDown="Message_MouseDown"
-                   Background="CornflowerBlue" Foreground="White"/>
+
+        <Button 
+                Name="registerFace" Content="注册人脸" Click="RegisterFace_Click"
+                Background="#FFB1D21C" Foreground="Black" FontSize="36" BorderThickness="0"/>
+        <Button 
+            Name="shelf" Content="书架"  Click="Shelf_Click"
+                Background="#FF0A7832" Foreground="White" FontSize="40" BorderThickness="0"/>
+
+        <Button 
+            Name="config" Content="设置"  Click="Config_Click"
+                Background="#FF254276" Foreground="White" FontSize="40" BorderThickness="0"/>
+        <Grid Background="Black" Opacity="0.7">
+            <TextBlock Name="number"
+                   Text="{Binding Path=Number,Mode=OneWay}"
+                   TextAlignment="Center" FontSize="100"
+                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                   Background="Transparent" Foreground="White"/>
+        </Grid>
         <Button Name="error" Content="错误信息"  Click="Error_Click"
-                Visibility="{Binding Path=Error, Converter={StaticResource StringToVis}}"
-                Background="DarkRed" Foreground="White" FontSize="40" BorderThickness="0"/>
+                Visibility="{Binding Path=Error, Mode=OneWay, Converter={StaticResource StringToVis}}"
+                Background="DarkRed" Foreground="White" FontSize="36" BorderThickness="0"/>
+
     </UniformGrid>
 </Page>

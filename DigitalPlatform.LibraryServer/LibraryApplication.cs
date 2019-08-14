@@ -25,6 +25,7 @@ using DigitalPlatform.Message;
 using DigitalPlatform.rms.Client.rmsws_localhost;
 using DigitalPlatform.LibraryServer.Common;
 using DigitalPlatform.Core;
+using DigitalPlatform.Marc;
 
 namespace DigitalPlatform.LibraryServer
 {
@@ -67,7 +68,7 @@ namespace DigitalPlatform.LibraryServer
 
         public DailyItemCountTable DailyItemCountTable = new DailyItemCountTable();
 
-        internal static DateTime _expire = new DateTime(2019, 7, 15); // 上一个版本是 2019/5/15 2019/2/15 2018/11/15 2018/9/15 2018/7/15 2018/5/15 2018/3/15 2017/1/15 2017/12/1 2017/9/1 2017/6/1 2017/3/1 2016/11/1
+        internal static DateTime _expire = new DateTime(2019, 10, 15); // 上一个版本是 2019/7/15 2019/5/15 2019/2/15 2018/11/15 2018/9/15 2018/7/15 2018/5/15 2018/3/15 2017/1/15 2017/12/1 2017/9/1 2017/6/1 2017/3/1 2016/11/1
 
 #if NO
         int m_nRefCount = 0;
@@ -105,6 +106,10 @@ namespace DigitalPlatform.LibraryServer
         /// 在登录阶段是否强制检查前端的版本号？(对几个特殊的代理账户不做此项检查)
         /// </summary>
         public bool CheckClientVersion = false;
+
+        // 负责存储统计日志的 UID 的 Hashtable。用途是防止重复写入 UID 相同的日志记录
+        // uid --> true
+        public UidTable StatisLogUidTable = new UidTable(); 
 
         /// <summary>
         /// 在登录阶段要给所有账户都添加的权限列表。用逗号分隔的字符串
@@ -926,11 +931,10 @@ namespace DigitalPlatform.LibraryServer
                                 this.PatronReplicationFields = StringUtil.SplitList(strList);
                         }
 
-                        int v = 0;
                         nRet = DomUtil.GetIntegerParam(node,
                             "maxPatronHistoryItems",
                             10, // 100,
-                            out v,
+                            out int v,
                             out strError);
                         if (nRet == -1)
                             app.WriteErrorLog(strError);
@@ -3077,6 +3081,25 @@ namespace DigitalPlatform.LibraryServer
                 }
             }
 
+            // 2019/7/24
+            // 检查两个保留 account 元素的 type 属性
+            {
+                XmlNodeList accounts = this.LibraryCfgDom.DocumentElement.SelectNodes("accounts/account[@name='reader' or @name='public']");
+                foreach(XmlElement account in accounts)
+                {
+                    string type = account.GetAttribute("type");
+                    if (string.IsNullOrEmpty(type))
+                    {
+                        // errors.Add($"name属性值为 '{account.GetAttribute("name")}' 的 account 元素，其 type 属性值('')错误，必须为 'reader'");
+
+                        // 强制修改
+                        account.SetAttribute("type", "reader");
+                        this.Changed = true;
+                    }
+                }
+            }
+
+            // 检查图书馆名
             string libraryName = DomUtil.GetElementText(this.LibraryCfgDom.DocumentElement, "libraryInfo/libraryName");
             if (string.IsNullOrEmpty(libraryName) == false && libraryName.IndexOfAny(new char[] { '/', '\\' }) != -1)
                 errors.Add($"libraryInfo/libraryName 元素中的图书馆名 '{libraryName}' 不合法");
@@ -3090,6 +3113,9 @@ namespace DigitalPlatform.LibraryServer
                 return -1;
             }
 
+            // 2019/7/24
+            if (this.Changed == true)
+                this.Flush();
             return 0;
         }
 

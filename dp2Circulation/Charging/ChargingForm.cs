@@ -1332,7 +1332,9 @@ namespace dp2Circulation
             //      -1  出错
             //      0   不需要进行变换
             //      1   需要进行变换
-            nRet = Program.MainForm.NeedTranformBarcode(Program.MainForm.FocusLibraryCode, out strError);
+            nRet = Program.MainForm.NeedTransformBarcode(
+                Program.MainForm.FocusLibraryCode,
+                out strError);
             if (nRet == -1)
                 goto ERROR1;
             if (nRet == 1)
@@ -1995,7 +1997,9 @@ dlg.UiState);
             //      -1  出错
             //      0   不需要进行变换
             //      1   需要进行变换
-            nRet = Program.MainForm.NeedTranformBarcode(Program.MainForm.FocusLibraryCode, out strError);
+            nRet = Program.MainForm.NeedTransformBarcode(
+                Program.MainForm.FocusLibraryCode,
+                out strError);
             if (nRet == -1)
                 goto ERROR1;
             if (nRet == 1)
@@ -3449,7 +3453,7 @@ Keys keyData)
         /// <summary>
         /// 移交
         /// </summary>
-        Move = 13,  // 移交 2017/1/12
+        Transfer = 13,  // 移交 2017/1/12
     }
 
     /*public*/

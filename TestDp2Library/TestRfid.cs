@@ -419,10 +419,10 @@ L output:01100");
                 0xbe, 0x99, 0x1a, 0x14,
             };
             var element = Element.Parse(data, 0, out int bytes);
-            Assert.AreEqual((int)element.OID, 1);
-            Assert.AreEqual(element.Text, "123456789012");
-            Assert.AreEqual(element.PrecursorOffset, true); // Precursor 后面会有 1 byte 的填充字符数
-            Assert.AreEqual(element.Paddings, 0);   // 填充 byte 没有使用
+            Assert.AreEqual(1, (int)element.OID);
+            Assert.AreEqual("123456789012", element.Text);
+            Assert.AreEqual(true, element.PrecursorOffset); // Precursor 后面会有 1 byte 的填充字符数
+            Assert.AreEqual(0, element.Paddings);   // 填充 byte 没有使用
         }
 
         [TestMethod]
@@ -633,6 +633,17 @@ ac a2 a6 5f
 
         }
 
+        [TestMethod]
+        public void test_logicChip_11()
+        {
+            // 汪总提供
+            // 
+            string bytes = @"E102074535353536373200000201B8030C1B81E130103A1AC9AB4C48BF65011266010067010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000575F4F4B";
+            byte[] data = Element.FromHexString(bytes);
+            LogicChip chip = LogicChip.From(data, 4);
+            Debug.Write(chip.ToString());
+
+        }
 
         #endregion
 

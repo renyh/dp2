@@ -153,7 +153,7 @@ namespace DigitalPlatform.CirculationClient
             log4net.Config.XmlConfigurator.Configure(repository);
 
             LibraryChannelManager.Log = LogManager.GetLogger("main", "channellib");
-            _log = LogManager.GetLogger("main", 
+            _log = LogManager.GetLogger("main",
                 product_name
                 // "fingerprintcenter"
                 );
@@ -170,11 +170,10 @@ namespace DigitalPlatform.CirculationClient
                     // 在用户目录中写入一个隐藏文件，表示序列号功能已经启用
                     // this.WriteSerialNumberStatusFile();
 
-                    string strError = "";
                     int nRet = VerifySerialCode($"{product_name}需要先设置序列号才能使用",
                         "",
                         "reinput",
-                        out strError);
+                        out string strError);
                     if (nRet == -1)
                     {
                         MessageBox.Show(MainForm, $"{product_name}需要先设置序列号才能使用");
@@ -183,7 +182,6 @@ namespace DigitalPlatform.CirculationClient
                     }
                 }
             }
-
         }
 
         public static void Finish()
@@ -408,16 +406,34 @@ namespace DigitalPlatform.CirculationClient
 
             string filename = Path.Combine(UserDir, "settings.xml");
             _config = ConfigSetting.Open(filename, true);
+
+#if NO
+            try
+            {
+                _config = ConfigSetting.Open(filename, true);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"配置文件 {filename} 装载失败：{ex.Message}");
+                _config = ConfigSetting.Create(filename);
+            }
+#endif
         }
 
+        // 可反复调用
         public static void SaveConfig()
         {
+#if NO
             // Save the configuration file.
             if (_config != null)
             {
                 _config.Save();
                 _config = null;
             }
+#endif
+            // Save the configuration file.
+            if (_config != null && _config.Changed == true)
+                _config.Save();
         }
 
         public static void AddShortcutToStartupGroup(string strProductName)
@@ -437,7 +453,7 @@ namespace DigitalPlatform.CirculationClient
                 {
                     File.Copy(strSourcePath, strTargetPath, true);
                 }
-                catch(System.IO.FileNotFoundException)
+                catch (System.IO.FileNotFoundException)
                 {
                     // source 文件有可能不存在
                 }
@@ -989,5 +1005,19 @@ delegate_action action)
 
         #endregion
 
+        public static bool IsMinimizeMode()
+        {
+            try
+            {
+                // https://stackoverflow.com/questions/558344/clickonce-appref-ms-argument
+                var args = AppDomain.CurrentDomain?.SetupInformation?.ActivationArguments?.ActivationData[0];
+                // List<string> args = StringUtil.GetCommandLineArgs();
+                return args.IndexOf("minimize") != -1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

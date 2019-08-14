@@ -8,13 +8,14 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Threading;
 
 using log4net;
 
+using DigitalPlatform;
 using DigitalPlatform.Core;
 using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
-using DigitalPlatform;
 
 namespace dp2SSL
 {
@@ -150,14 +151,12 @@ namespace dp2SSL
             _config = ConfigSetting.Open(filename, true);
         }
 
+        // 允许反复调用
         public static void SaveConfig()
         {
             // Save the configuration file.
-            if (_config != null)
-            {
+            if (_config != null && _config.Changed)
                 _config.Save();
-                _config = null;
-            }
         }
 
         #region Log
@@ -438,5 +437,87 @@ namespace dp2SSL
 
             return new NormalResult();
         }
+
+        public static void AddShortcutToStartupGroup(string strProductName)
+        {
+            if (ApplicationDeployment.IsNetworkDeployed &&
+                ApplicationDeployment.CurrentDeployment != null &&
+                ApplicationDeployment.CurrentDeployment.IsFirstRun)
+            {
+
+                string strTargetPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                strTargetPath = Path.Combine(strTargetPath, strProductName) + ".appref-ms";
+
+                string strSourcePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                strSourcePath = Path.Combine(strSourcePath, strProductName) + ".appref-ms";
+
+                try
+                {
+                    File.Copy(strSourcePath, strTargetPath, true);
+                }
+                catch (System.IO.FileNotFoundException)
+                {
+                    // source 文件有可能不存在
+                }
+            }
+        }
+
+        // parameters:
+        //      force 是否强制删除？如果为 false 表示不强制删除。在不是强制删除的情况下，应当满足 ClickOnce 启动并且是安装更新后第一次启动运行本函数才有效
+        public static void RemoveShortcutFromStartupGroup(string strProductName,
+            bool force = false)
+        {
+            if (force
+                || (ApplicationDeployment.IsNetworkDeployed &&
+    ApplicationDeployment.CurrentDeployment != null &&
+    ApplicationDeployment.CurrentDeployment.IsFirstRun))
+            {
+                string strTargetPath = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                strTargetPath = Path.Combine(strTargetPath, strProductName) + ".appref-ms";
+
+                try
+                {
+                    File.Delete(strTargetPath);
+                }
+                catch
+                {
+
+                }
+            }
+        }
+
+        public static bool HasModuleStarted(string mutex_name)
+        {
+            bool createdNew = true;
+            // mutex name need contains windows account name. or us programes file path, hashed
+            using (Mutex mutex = new Mutex(true,
+                mutex_name, // "dp2libraryXE V3", 
+                out createdNew))
+            {
+                if (createdNew)
+                    return false;
+                else
+                    return true;
+            }
+        }
+
+        public static bool StartModule(
+            string shortcut_path,
+            string arguments)
+        {
+            string strShortcutFilePath = PathUtil.GetShortcutFilePath(
+                    shortcut_path
+                    // "DigitalPlatform/dp2 V3/dp2Library XE V3"
+                    );
+
+            if (File.Exists(strShortcutFilePath) == false)
+                return false;
+
+            // https://stackoverflow.com/questions/558344/clickonce-appref-ms-argument
+            Process.Start(strShortcutFilePath, arguments);
+            return true;
+        }
+
     }
+
 }

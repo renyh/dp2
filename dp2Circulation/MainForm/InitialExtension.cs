@@ -2375,7 +2375,18 @@ AppInfo.GetString("config",
                         if (nRet != 0)
                             MessageBox.Show(this, strError);
 
-                        this.BeginInvoke(new Action(FillLibraryCodeListMenu));
+                        Task.Run(() =>
+                        {
+                            string location = AppInfo.GetString("global", "currentLocation", "");
+                            this.Invoke((Action)(() =>
+                            {
+                                // 填充列表
+                                FillLibraryCodeListMenu();
+                                // 复原以前的选择
+                                SetCurrentLocation(location);
+                            }));
+                        });
+                        // this.BeginInvoke(new Action(FillLibraryCodeListMenu));
                     }
                     catch (Exception)
                     {
@@ -3410,11 +3421,14 @@ Culture=neutral, PublicKeyToken=null
 
             try
             {
-                string strValue = "";
+                this.LibraryName = "";
+                this.ExpireDate = "";
+                this.OpacServerUrl = "";
+
                 long lRet = channel.GetSystemParameter(Stop,
                     "library",
                     "name",
-                    out strValue,
+                    out string strValue,
                     out strError);
                 if (lRet == -1)
                 {
@@ -3438,6 +3452,20 @@ Culture=neutral, PublicKeyToken=null
                 }
 
                 this.ExpireDate = strValue;
+
+                // OPAC URL
+                lRet = channel.GetSystemParameter(Stop,
+    "opac",
+    "serverDirectory",
+    out strValue,
+    out strError);
+                if (lRet == -1)
+                {
+                    strError = "针对服务器 " + channel.Url + " opac/serverDirectory 过程发生错误：" + strError;
+                    goto ERROR1;
+                }
+
+                this.OpacServerUrl = strValue;
             }
             finally
             {
@@ -5224,7 +5252,7 @@ out strError);
         string _focusLibraryCode = "";
 
         // 当前操作所针对的分馆 代码
-        // 注: 全局用户可以操作任何分管，和总馆，通过此成员，可以明确它当前正在操作哪个分馆，这样可以明确 VerifyBarcode() 的 strLibraryCodeList 参数值
+        // 注: 全局用户可以操作任何分馆，和总馆，通过此成员，可以明确它当前正在操作哪个分馆，这样可以明确 VerifyBarcode() 的 strLibraryCodeList 参数值
         public string FocusLibraryCode
         {
             get
@@ -5241,9 +5269,8 @@ out strError);
 
         void FillLibraryCodeListMenu()
         {
-            string strError = "";
-            List<string> all_library_codes = null;
-            int nRet = this.GetAllLibraryCodes(out all_library_codes, out strError);
+            int nRet = this.GetAllLibraryCodes(out List<string> all_library_codes,
+                out string strError);
 
             List<string> library_codes = new List<string>();
             if (Global.IsGlobalUser(_currentLibraryCodeList) == true)
@@ -5253,6 +5280,9 @@ out strError);
             }
             else
                 library_codes = StringUtil.SplitList(_currentLibraryCodeList);
+
+            // 保存以前的选择
+            string old_location = GetCurrentLocation();
 
             this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Clear();
             foreach (string library_code in library_codes)
@@ -5266,9 +5296,29 @@ out strError);
                 this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Add(item);
             }
 
-            // 默认选定第一项
-            if (this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Count > 0)
-                item_Click(this.toolStripDropDownButton_selectLibraryCode.DropDownItems[0], new EventArgs());
+            // 添加附加的馆藏地
+            string value = this.AppInfo.GetString(
+    "global",
+    "additionalLocations",
+    "");
+            List<string> list = StringUtil.SplitList(value);
+            foreach (string s in list)
+            {
+                ToolStripItem item = new ToolStripMenuItem(s);
+                item.Tag = s;
+                item.Click += item_Click;
+                this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Add(item);
+            }
+
+            // 恢复以前的选择
+            if (string.IsNullOrEmpty(old_location) == false)
+                SetCurrentLocation(old_location);
+            else
+            {
+                // 默认选定第一项
+                if (this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Count > 0)
+                    item_Click(this.toolStripDropDownButton_selectLibraryCode.DropDownItems[0], new EventArgs());
+            }
         }
 
         void item_Click(object sender, EventArgs e)
@@ -5281,6 +5331,34 @@ out strError);
             }
             item.Checked = true;
             FocusLibraryCode = item.Tag as string;
+        }
+
+        string GetCurrentLocation()
+        {
+            foreach (ToolStripMenuItem current in this.toolStripDropDownButton_selectLibraryCode.DropDownItems)
+            {
+                if (current.Checked == true)
+                    return current.Tag as string;
+            }
+
+            return null;
+        }
+
+        void SetCurrentLocation(string location)
+        {
+            foreach (ToolStripMenuItem current in this.toolStripDropDownButton_selectLibraryCode.DropDownItems)
+            {
+                string current_text = current.Tag as string;
+                if (current_text == location)
+                {
+                    item_Click(current, new EventArgs());
+                    return;
+                }
+            }
+
+            // 选择第一项
+            if (this.toolStripDropDownButton_selectLibraryCode.DropDownItems.Count > 0)
+                item_Click(this.toolStripDropDownButton_selectLibraryCode.DropDownItems[0], new EventArgs());
         }
 
         // 获得全部可用的图书馆代码。注意，并不包含 "" (全局)

@@ -10,9 +10,10 @@ using static DigitalPlatform.Script.ScriptUtil;
 
 namespace DigitalPlatform.LibraryServer
 {
+#if REMOVED
     public static class MarcTable
     {
-        static string CRLF = "\n";
+        static readonly string CRLF = "\n";
 
         #region UNIMARC
 
@@ -1168,7 +1169,9 @@ namespace DigitalPlatform.LibraryServer
 
             string strImageUrl = ScriptUtil.GetCoverImageUrl(strMARC, "LargeImage");    // LargeImage
             if (string.IsNullOrEmpty(strImageUrl) == false)
-                results.Add(new NameValueLine("_coverImage", strImageUrl));
+                results.Add(new NameValueLine("_coverImage", strImageUrl, 
+                    "coverimageurl" // 2019/7/19 添加
+                    ));
 
             // LC control no.
             MarcNodeList nodes = record.select("field[@name='010']/subfield[@name='a']");
@@ -1810,4 +1813,6 @@ namespace DigitalPlatform.LibraryServer
 
     }
 
+
+#endif
 }

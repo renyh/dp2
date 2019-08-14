@@ -18,6 +18,8 @@ using System.Diagnostics;
 
 using static FingerprintCenter.FingerPrint;
 
+using Microsoft.Win32;
+
 using DigitalPlatform;
 using DigitalPlatform.IO;
 using DigitalPlatform.Text;
@@ -26,7 +28,6 @@ using DigitalPlatform.CommonControl;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.CirculationClient;
 using static DigitalPlatform.CirculationClient.BioUtil;
-using Microsoft.Win32;
 
 namespace FingerprintCenter
 {
@@ -262,6 +263,18 @@ bool bClickClose = false)
                 else if (string.IsNullOrEmpty(result.ErrorInfo) == false)
                     OutputHistory(result.ErrorInfo, 0);
             });
+
+            if (ClientInfo.IsMinimizeMode())
+            {
+                Task.Run(() =>
+                {
+                    Task.Delay(2000).Wait();
+                    this.BeginInvoke((Action)(() =>
+                    {
+                        this.WindowState = FormWindowState.Minimized;
+                    }));
+                });
+            }
         }
 
         // 指纹功能是否初始化成功
@@ -534,8 +547,13 @@ bool bClickClose = false)
             }));
         }
 
+        PromptManager _prompt = new PromptManager(2);
+
         private void FingerPrint_Prompt(object sender, MessagePromptEventArgs e)
         {
+            _prompt.Prompt(this, e);
+
+#if NO
             // TODO: 自动延时以后重试
             this.Invoke((Action)(() =>
             {
@@ -579,24 +597,30 @@ bool bClickClose = false)
                         e.ResultAction = "no";
                 }
             }));
+#endif
+        }
+
+        void SaveSettings()
+        {
+            if (this.checkBox_cfg_savePasswordLong.Checked == false)
+                this.textBox_cfg_password.Text = "";
+            ClientInfo.Config?.Set("global", "ui_state", this.UiState);
+            ClientInfo.Config?.Set("global", "replication_start", this.textBox_replicationStart.Text);
+            ClientInfo.Finish();
         }
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
             EndTimer();
 
-            _cancel.Cancel();
+            _cancel?.Cancel();
+
+            AbortReplication(false);
 
             SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
             // UsbNotification.UnregisterUsbDeviceNotification();
 
-            {
-                if (this.checkBox_cfg_savePasswordLong.Checked == false)
-                    this.textBox_cfg_password.Text = "";
-                ClientInfo.Config.Set("global", "ui_state", this.UiState);
-                ClientInfo.Config.Set("global", "replication_start", this.textBox_replicationStart.Text);
-                ClientInfo.Finish();
-            }
+            ////
 
             EndChannel();
             FingerprintServer.EndRemotingServer();
@@ -845,6 +869,37 @@ bool bClickClose = false)
             LibraryChannel channel = this.GetChannel();
             try
             {
+                // 2019/7/29
+                // 检查 dp2library 服务器版本
+                long lRet = channel.GetVersion(null,
+out string strVersion,
+out string strUID,
+out strError);
+                if (lRet == -1)
+                {
+                    strError = $"获得 dp2library 服务器版本时出错: {strError}";
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorInfo = strError,
+                        ErrorCode = channel.ErrorCode.ToString()
+                    };
+                }
+
+                this.ServerUID = strUID;
+
+                /*
+                if (StringUtil.CompareVersion(strVersion, "3.13") < 0)
+                {
+                    strError = $"指纹识别功能要求 dp2library 在版本 3.13 或以上 (但当前 dp2library 版本是 {strVersion})";
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorInfo = strError
+                    };
+                }
+                */
+
                 ReplicationPlan plan = BioUtil.GetReplicationPlan(channel);
                 if (plan.Value == -1)
                     return new NormalResult
@@ -950,7 +1005,7 @@ MessageBoxDefaultButton.Button2);
             _cancel.Cancel();
         }
 
-        #region ipc channel
+#region ipc channel
 
         public static bool CallActivate(string strUrl)
         {
@@ -1025,7 +1080,7 @@ MessageBoxDefaultButton.Button2);
             }
         }
 
-        #endregion
+#endregion
 
         delegate void _ActivateWindow(bool bActive);
 
@@ -1088,7 +1143,7 @@ MessageBoxDefaultButton.Button2);
             FingerPrint.CancelRegisterString();
         }
 
-        #region 浏览器控件
+#region 浏览器控件
 
         public void ClearHtml()
         {
@@ -1242,7 +1297,7 @@ string strHtml)
             AppendHtml("<div class='debug " + strClass + "'>" + HttpUtility.HtmlEncode(strText).Replace("\r\n", "<br/>") + "</div>");
         }
 
-        #endregion
+#endregion
 
         void DisplayText(string text,
             string textColor = "white",
@@ -1283,6 +1338,8 @@ string strHtml)
                     return;
                 }
             }
+
+            SaveSettings();
         }
 
         protected override bool ProcessDialogKey(
@@ -1301,7 +1358,7 @@ Keys keyData)
         }
 
 #if NO
-        #region device changed
+#region device changed
 
         const int WM_DEVICECHANGE = 0x0219; //see msdn site
         const int DBT_DEVNODES_CHANGED = 0x0007;
@@ -1333,7 +1390,7 @@ Keys keyData)
             base.WndProc(ref m);
         }
 
-        #endregion
+#endregion
 #endif
 
         public void ActivateWindow()
@@ -1401,6 +1458,11 @@ Keys keyData)
             }
 #endif
             base.WndProc(ref m);
+        }
+
+        public void Restart()
+        {
+            BeginRefreshReaders("connected", new CancellationToken());
         }
 
         int _refreshCount = 0;
@@ -1695,6 +1757,9 @@ token);
             if (_cancelReplication != null
                 || _inInitialCache == true)
                 return;
+
+            // 2019/6/19
+            ClientInfo.SaveConfig();
 
             BeginReplication();
         }

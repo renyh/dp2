@@ -890,14 +890,15 @@ out strError);
                     return -1;
 
                 MessageData[] messages = new MessageData[1];
-                MessageData[] output_messages = null;
 
-                messages[0] = new MessageData();
-                messages[0].strRecipient = "crash";
-                messages[0].strSender = strSender;
-                messages[0].strSubject = strSubject;
-                messages[0].strMime = "text";
-                messages[0].strBody = strContent;
+                messages[0] = new MessageData
+                {
+                    strRecipient = "crash",
+                    strSender = strSender,
+                    strSubject = strSubject,
+                    strMime = "text",
+                    strBody = strContent
+                };
                 //messages[0].strRecordID = strOldRecordID;   // string strOldRecordID,
                 //messages[0].TimeStamp = baOldTimeStamp;   // byte [] baOldTimeStamp,
 
@@ -905,7 +906,7 @@ out strError);
                     "send",
                     "",
                     messages,
-                    out output_messages,
+                    out MessageData[] output_messages,
                     out strError);
                 if (lRet == -1)
                     return -1;
@@ -2423,10 +2424,12 @@ out strError);
 
             if (this.BeforeLogin != null)
             {
-                BeforeLoginEventArgs ea = new BeforeLoginEventArgs();
-                ea.LibraryServerUrl = this.Url;
-                ea.FirstTry = true;
-                ea.ErrorInfo = strError;
+                BeforeLoginEventArgs ea = new BeforeLoginEventArgs
+                {
+                    LibraryServerUrl = this.Url,
+                    FirstTry = true,
+                    ErrorInfo = strError
+                };
 
                 REDOLOGIN:
                 this.BeforeLogin(this, ea);
@@ -2460,11 +2463,12 @@ out strError);
 
                 if (_loginCount > 100)
                 {
-                    strError = "重新登录次数太多，超过 100 次，请检查登录 API 是否出现了逻辑问题";
+                    strError = $"重新登录次数太多，超过 100 次。最近一次错误信息='{strError}'，ErrorCode={this.ErrorCode} 。请检查登录 API 是否出现了逻辑问题";
                     _loginCount = 0;    // 重新开始计算
                     return -1;
                 }
 
+                // TODO: 可以考虑把登录 API 请求参数写入错误日志，便于调试观察
                 _loginCount++;
                 long lRet = this.Login(ea.UserName,
                     ea.Password,
@@ -6743,7 +6747,7 @@ out strError);
         //      需要 getres 权限
         // return:
         //      -1  出错
-        //      0   成功
+        //      >=0   成功(返回值一般表示资源的总尺寸(注意不是这次获取的部分的尺寸))
         public long GetRes(
             DigitalPlatform.Stop stop,
             string strResPath,
@@ -6830,7 +6834,7 @@ out strError);
         // return:
         //		strStyle	一般设置为"content,data,metadata,timestamp,outputpath";
         //		-1	出错。具体出错原因在this.ErrorCode中。this.ErrorInfo中有出错信息。
-        //		0	成功
+        //		>=0	成功(2019/6/23 注: 注意返回值可能是 byte [] 的长度，不是 strResult 内容的字符数)
         public long GetRes(
             DigitalPlatform.Stop stop,
             string strPath,
@@ -6853,6 +6857,7 @@ out strError);
             int nPerLength = -1;
 
             byte[] baTotal = null;
+            long lRet = 0;
 
             for (; ; )
             {
@@ -6862,7 +6867,7 @@ out strError);
                     // Application.DoEvents();	// 出让界面控制权
                 }
 
-                long lRet = this.GetRes(stop,
+                lRet = this.GetRes(stop,
                         strPath,
                         nStart,
                         nPerLength,
@@ -6895,13 +6900,12 @@ out strError);
             if (StringUtil.IsInList("data", strStyle) != true)
                 return 0;
 
-
             // 转换成字符串
             strResult = ByteArray.ToString(baTotal/*,
 				Encoding.UTF8*/
                                );	// 将来做自动识别编码方式
 
-            return 0;   // TODO: return lRet?
+            return lRet;    // 2019/6/23 以前为 return 0;
         }
 
 #if NNNNNNNNO

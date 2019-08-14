@@ -54,7 +54,7 @@ namespace FingerprintCenter
         // 注册过程完成
         AutoResetEvent _eventRegisterFinished = new AutoResetEvent(false);
 
-        public const int DefaultThreshold = 10;
+        public const int DefaultThreshold = 70; // 2019/6/19 修改为 70。此前是 10
 
         int _shreshold = DefaultThreshold;
         public int Shreshold
@@ -124,7 +124,7 @@ namespace FingerprintCenter
 
         // 设备列表
         List<string> _dev_list = new List<string>();
-        public List<string> DeviceList
+        public new List<string> DeviceList
         {
             get
             {
@@ -300,6 +300,7 @@ namespace FingerprintCenter
             out string strError)
         {
             return AddItems(new List<FingerprintItem> { new FingerprintItem { ReaderBarcode = strReaderBarcode } },
+                null,
                 out strError);
         }
 
@@ -311,6 +312,7 @@ namespace FingerprintCenter
         //      其他  失败。错误码
         public override int AddItems(
             List<FingerprintItem> items,
+            ProcessInfo info_param,
             out string strError)
         {
             strError = "";
@@ -750,8 +752,8 @@ namespace FingerprintCenter
                         new FingerprintItem {
                             ReaderBarcode = temp_id,
                             FingerprintString = zkfp2.BlobToBase64(buffer, length)
-                        }
-                        },
+                        }},
+                        null,
                         out string strError);
                     if (nRet == -1)
                         return new TextResult { Value = -1, ErrorInfo = "尝试加入高速缓存时失败" };

@@ -448,7 +448,8 @@ namespace dp2Circulation
 
         public void DoEnter()
         {
-            AsyncDoAction(this.FuncState, GetUpperCase(this.textBox_input.Text));
+            AsyncDoAction(this.FuncState, 
+                GetUpperCase(this.textBox_input.Text));
         }
 
         /// <summary>
@@ -645,9 +646,9 @@ namespace dp2Circulation
                 dlg.VerifyBorrower = this._taskList.CurrentReaderBarcode;
                 dlg.Text = "请选择要配书的册";
             }
-            else if (func == dp2Circulation.FuncState.Move)
+            else if (func == dp2Circulation.FuncState.Transfer)
             {
-                dlg.FunctionType = "move";
+                dlg.FunctionType = "transfer";
                 dlg.Text = "请选择要调拨的册";
             }
 
@@ -1386,9 +1387,7 @@ System.Runtime.InteropServices.COMException (0x800700AA): 请求的资源在使�
                                 line.EnsureVisible();
                         }
                     }
-
                 }
-
             }
 
             // 刷新读者摘要窗口
@@ -1669,7 +1668,8 @@ System.Runtime.InteropServices.COMException (0x800700AA): 请求的资源在使�
             //      -1  出错
             //      0   不需要进行变换
             //      1   需要进行变换
-            nRet = Program.MainForm.NeedTranformBarcode(Program.MainForm.FocusLibraryCode,
+            nRet = Program.MainForm.NeedTransformBarcode(
+                Program.MainForm.FocusLibraryCode,
                 out strError);
             if (nRet == -1)
             {
@@ -1906,12 +1906,27 @@ System.Runtime.InteropServices.COMException (0x800700AA): 请求的资源在使�
                 task.Action = "boxing";
                 task.Parameters = strParameters;
             }
-            else if (func == dp2Circulation.FuncState.Move)
+            else if (func == dp2Circulation.FuncState.Transfer)
             {
+                // 检查 dp2library 版本
+                if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "3.16") < 0)
+                {
+                    // TODO: 语音提示
+                    // TODO: 红色对话框
+                    MessageBox.Show(this, $"调拨功能要求 dp2library 版本为 3.16 以上(而现在是 {Program.MainForm.ServerVersion})");
+                    this.textBox_input.SelectAll();
+                    this.textBox_input.Focus();
+                    return;
+                }
                 task.ItemBarcode = GetContent(strText);
                 task.ItemBarcodeEasType = GetEasType(strText);
-                task.Action = "move";
-                task.Parameters = strParameters;
+                task.Action = "transfer";
+
+                List<string> parameters = new List<string>();
+                if (string.IsNullOrEmpty(strParameters) == false)
+                    parameters.Add(strParameters);
+                parameters.Add($"location:{this._targetLocation}");
+                task.Parameters = StringUtil.MakePathList(parameters);
             }
 
             this.textBox_input.SelectAll();
@@ -2295,7 +2310,7 @@ false);
                 this.toolStripMenuItem_inventoryBook.Checked = false;
                 this.toolStripMenuItem_read.Checked = false;
                 this.toolStripMenuItem_boxing.Checked = false;
-                this.toolStripMenuItem_move.Checked = false;
+                this.toolStripMenuItem_transfer.Checked = false;
 
                 if (this.AutoClearTextbox == true)
                 {
@@ -2369,10 +2384,16 @@ false);
 
                     WillLoadReaderInfo = false;
                 }
-                else if (_funcstate == FuncState.Move)
+                else if (_funcstate == FuncState.Transfer)
                 {
-                    this.toolStripMenuItem_move.Checked = true;
+                    this.toolStripMenuItem_transfer.Checked = true;
                     WillLoadReaderInfo = false;
+                    Task.Run(()=> {
+                        this.Invoke((Action)(() =>
+                        {
+                            toolStripButton_selectTransferTargetLocation_Click(this, new EventArgs());
+                        }));
+                    });
                 }
                 // SetInputMessage();
             }
@@ -3648,7 +3669,7 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5735.664, Culture=neutral, Pu
                 strText = "读";
             else if (_funcstate == FuncState.Boxing)
                 strText = "配";
-            else if (_funcstate == FuncState.Move)
+            else if (_funcstate == FuncState.Transfer)
                 strText = "调";
             else
                 strText = "?";
@@ -3840,12 +3861,42 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5735.664, Culture=neutral, Pu
 
         private void ToolStripMenuItem_move_Click(object sender, EventArgs e)
         {
-            this.FuncState = FuncState.Move;
+            this.FuncState = FuncState.Transfer;
         }
 
-        private void toolStripButton_selectTargetLocation_Click(object sender, EventArgs e)
-        {
+        string _targetLocation = "";
 
+        // 选择调拨去向
+        private void toolStripButton_selectTransferTargetLocation_Click(object sender, EventArgs e)
+        {
+            // 选择目标馆藏地的对话框
+            // 须是当前操作者能管辖的分馆内的馆藏地
+            /*
+            REDO:
+            var result = InputDlg.GetInput(this, "title",
+                "目标馆藏地", "", this.Font);
+            if (result == null)
+                return;
+
+            if (string.IsNullOrEmpty(result))
+                goto REDO;
+
+            this._targetLocation = result; 
+            */
+            using (SelectLocationDialog dlg = new SelectLocationDialog())
+            {
+                dlg.Text = "请选择调拨目标馆藏地";
+                dlg.SelectedLocation = this._targetLocation;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.ShowDialog(this);
+                if (dlg.DialogResult == DialogResult.Cancel)
+                    return;
+
+                this._targetLocation = dlg.SelectedLocation;
+
+                this.textBox_input.SelectAll();
+                this.textBox_input.Focus();
+            }
         }
 
         void EnableControlsForFace(bool enable)
@@ -3878,7 +3929,7 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5735.664, Culture=neutral, Pu
                         ErrorInfo = $"人脸中心所连接的 dp2library 服务器 UID {getstate_result.ErrorCode} 和内务当前所连接的 UID {Program.MainForm.ServerUID} 不同。无法进行人脸识别"
                     };
                 else
-                    result = await RecognitionFace("");
+                    result = await RecognitionFace("ui");
             }
             finally
             {

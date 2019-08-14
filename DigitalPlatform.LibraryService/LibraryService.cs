@@ -5465,7 +5465,7 @@ namespace dp2Library
 
         // 还书
         // paramters:
-        //      strAction   动作。有 return/lost/inventory/read
+        //      strAction   动作。有 return/lost/inventory/read/transfer
         //      strReaderBarcode   读者证条码号
         //      strItemBarcode  册条码号
         //      bForce  是否强制执行还书操作。用于某些配置参数和数据结构不正确的特殊情况
@@ -9650,20 +9650,24 @@ Stack:
                     return result;
                 }
 #endif
-                // 当前是否定义了脚本?
-                // return:
-                //      -1  定义了，但编译有错
-                //      0   没有定义
-                //      1   定义了
-                int nRet = app.HasScript(out strError);
-                if (nRet == -1)
-                    goto ERROR1;
-                if (nRet == 0)
+                int nRet = 0;
+                if (app.BarcodeValidation == false) // 2019/7/12
                 {
-                    result.Value = -1;
-                    result.ErrorInfo = "没有配置<script>，无法校验条码号";
-                    result.ErrorCode = ErrorCode.NotFound;
-                    return result;
+                    // 当前是否定义了脚本?
+                    // return:
+                    //      -1  定义了，但编译有错
+                    //      0   没有定义
+                    //      1   定义了
+                    nRet = app.HasScript(out strError);
+                    if (nRet == -1)
+                        goto ERROR1;
+                    if (nRet == 0)
+                    {
+                        result.Value = -1;
+                        result.ErrorInfo = "没有配置<script>，无法校验条码号";
+                        result.ErrorCode = ErrorCode.NotFound;
+                        return result;
+                    }
                 }
 
                 if (string.IsNullOrEmpty(strAction)
@@ -9850,13 +9854,12 @@ Stack:
 
                     if (strAction == "cd")
                     {
-                        string strResult = "";
 
                         nRet = LibraryApplication.ChangeDirectory(
                             strRoot,
                             strCurrentDirectory,
                             strFileName,
-                            out strResult,  // 注意返回的是物理路径
+                            out string strResult,  // 注意返回的是物理路径
                             out strError);
                         if (nRet == -1)
                             goto ERROR1;
@@ -12028,6 +12031,8 @@ Stack:
 
                     // 下载本地文件
                     // TODO: 限制 nMaxLength 最大值
+                    // parameters:
+                    //      strStyle    "uploadedPartial" 表示操作都是针对已上载临时部分的。比如希望获得这个局部的长度，时间戳，等等
                     // return:
                     //      -2      文件不存在
                     //		-1      出错
@@ -14083,6 +14088,92 @@ out strError);
                 {
                     foreach (MessageData data in messages)
                     {
+                        // 统计信息写入操作日志
+                        if (data.strRecipient == "!statis")
+                        {
+                            XmlDocument data_dom = new XmlDocument();
+                            data_dom.LoadXml(data.strBody);
+
+                            string uid = DomUtil.GetElementText(data_dom.DocumentElement,
+                                "uid");
+                            if (string.IsNullOrEmpty(uid))
+                            {
+                                strError = "data body 中必须具备 uid 元素";
+                                goto ERROR1;
+                            }
+
+                            if (app.StatisLogUidTable.Contains(uid))
+                            {
+                                strError = $"UID 为 {uid} 的统计日志已经写入过了，无法重复写入";
+                                result.Value = -1;
+                                result.ErrorInfo = strError;
+                                result.ErrorCode = ErrorCode.AlreadyExist;
+                                return result;
+                            }
+
+                            XmlDocument domOperLog = new XmlDocument();
+                            domOperLog.LoadXml("<root />");
+
+                            DomUtil.SetElementText(domOperLog.DocumentElement,
+                                "operation",
+                                "statis");
+                            // 第一级元素
+                            if (data.strMime == "text/xml")
+                            {
+                                string[] reserve_list = new string[] {
+                                    "operation","operator","operTime"
+                                };
+                                XmlNodeList nodes = data_dom.DocumentElement.SelectNodes("*");
+                                foreach (XmlElement node in nodes)
+                                {
+                                    if (Array.IndexOf(reserve_list, node.Name) != -1)
+                                        continue;
+                                    // XmlElement new_node = domOperLog.CreateElement(node.Name);
+                                    XmlNode importNode = domOperLog.ImportNode(node, true);
+                                    domOperLog.DocumentElement.AppendChild(importNode);
+                                }
+                            }
+                            else
+                            {
+                                DomUtil.SetElementText(domOperLog.DocumentElement,
+    "subject",
+    data.strSubject);
+                                DomUtil.SetElementText(domOperLog.DocumentElement,
+                                    "sender",
+                                    data.strSender);
+                                DomUtil.SetElementText(domOperLog.DocumentElement,
+    "mime",
+    data.strMime);
+                                DomUtil.SetElementText(domOperLog.DocumentElement,
+                                    "content",
+                                    data.strBody);
+                            }
+
+                            DomUtil.SetElementText(domOperLog.DocumentElement, "operator",
+    sessioninfo.UserID);
+                            string strOperTime = app.Clock.GetClock();
+                            DomUtil.SetElementText(domOperLog.DocumentElement, "operTime",
+                                strOperTime);
+                            nRet = app.OperLog.WriteOperLog(domOperLog,
+                                sessioninfo.ClientAddress,
+                                out strError);
+                            if (nRet == -1)
+                            {
+                                strError = "统计信息写入操作日志时出错: " + strError;
+                                goto ERROR1;
+                            }
+
+                            /*
+                            // testing
+                            {
+                                strError = "统计信息写入操作日志时出错: 测试";
+                                goto ERROR1;
+                            }
+                            */
+
+                            app.StatisLogUidTable.Set(uid);
+                        }
+
                         // 异常报告还要写入操作日志
                         if (data.strRecipient == "crash")
                         {
@@ -14114,7 +14205,9 @@ out strError);
                             }
                         }
 
-                        nRet = app.MessageCenter.SendMessage(
+                        if (data.strRecipient == "crash")
+                        {
+                            nRet = app.MessageCenter.SendMessage(
                             sessioninfo.Channels,
                             data.strRecipient,
                             sessioninfo.UserID,
@@ -14123,8 +14216,9 @@ out strError);
                             data.strBody,
                             true,
                             out strError);
-                        if (nRet == -1)
-                            goto ERROR1;
+                            if (nRet == -1)
+                                goto ERROR1;
+                        }
                     }
                 }
 

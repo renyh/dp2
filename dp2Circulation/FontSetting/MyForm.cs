@@ -1988,6 +1988,67 @@ out string strError)
 
         #region 人脸登记功能(从 ReaderInfoForm 移动过来)
 
+        public Task<NormalResult> FaceNotifyTask(string event_name)
+        {
+            string strError = "";
+            if (string.IsNullOrEmpty(Program.MainForm.FaceReaderUrl) == true)
+            {
+                strError = "尚未配置 人脸识别接口URL 系统参数，无法通知人脸中心";
+                goto ERROR1;
+            }
+
+            FaceChannel channel = StartFaceChannel(
+                Program.MainForm.FaceReaderUrl,
+                out strError);
+            if (channel == null)
+                goto ERROR1;
+
+            _inFaceCall++;
+            try
+            {
+                try
+                {
+                    return Task.Factory.StartNew<NormalResult>(
+                        () =>
+                        {
+                            NormalResult temp_result = new NormalResult();
+                            try
+                            {
+                                return channel.Object.Notify(event_name);
+                            }
+                            catch (RemotingException ex)
+                            {
+                                temp_result.ErrorInfo = ex.Message;
+                                temp_result.Value = 0;  // 让调主认为没有出错
+                                return temp_result;
+                            }
+                            catch (Exception ex)
+                            {
+                                temp_result.ErrorInfo = ex.Message;
+                                temp_result.Value = -1;
+                                return temp_result;
+                            }
+                        });
+                }
+                catch (Exception ex)
+                {
+                    strError = "针对 " + Program.MainForm.FaceReaderUrl + " 的 Notify() 操作失败: " + ex.Message;
+                    goto ERROR1;
+                }
+            }
+            finally
+            {
+                _inFaceCall--;
+                EndFaceChannel(channel);
+            }
+            ERROR1:
+            return Task.FromResult(
+            new NormalResult {
+                Value = -1,
+                ErrorInfo = strError
+            });
+        }
+
         public async Task<NormalResult> CancelReadFeatureString()
         {
             string strError = "";
@@ -2037,7 +2098,7 @@ out string strError)
                 }
                 catch (Exception ex)
                 {
-                    strError = "针对 " + Program.MainForm.FaceReaderUrl + " 的 GetFeatureString() 操作失败: " + ex.Message;
+                    strError = "针对 " + Program.MainForm.FaceReaderUrl + " 的 CancelReadFeatureString() 操作失败: " + ex.Message;
                     goto ERROR1;
                 }
             }
@@ -2262,6 +2323,50 @@ out string strError)
             return 0;
         }
 
+        public async Task<NormalResult> FingerprintGetState(string strStyle)
+        {
+            if (string.IsNullOrEmpty(Program.MainForm.FingerprintReaderUrl) == true)
+            {
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = "尚未配置 指纹接口URL 系统参数，无法获得指纹中心状态"
+                };
+            }
+
+            var channel = StartFingerprintChannel(
+                Program.MainForm.FingerprintReaderUrl,
+                out string strError);
+            if (channel == null)
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = strError
+                };
+
+            try
+            {
+                return await Task.Factory.StartNew<NormalResult>(
+                    () =>
+                    {
+                        return channel.Object.GetState(strStyle);
+                    });
+            }
+            catch (Exception ex)
+            {
+                strError = "针对 " + Program.MainForm.FingerprintReaderUrl + " 的 GetState() 操作失败: " + ex.Message;
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = strError
+                };
+            }
+            finally
+            {
+                EndFingerprintChannel(channel);
+            }
+        }
+
         #endregion
 
         #region 其他 API
@@ -2445,6 +2550,76 @@ Keys keyData)
             }
             // TODO: 最好跳转到一个帮助目录页面
             MessageBox.Show(this, "当前没有帮助链接");
+        }
+
+        // 写入统计日志
+        // parameters:
+        //      prompt_action   [out] 重试/取消
+        // return:
+        //      -2  UID 已经存在
+        //      -1  出错。注意 prompt_action 中有返回值，表明已经提示和得到了用户反馈
+        //      其他  成功
+        public int WriteStatisLog(
+    string strSender,
+    string strSubject,
+    string strXml,
+            LibraryChannelExtension.delegate_prompt prompt,
+            out string prompt_action,
+    out string strError)
+        {
+            prompt_action = "";
+            strError = "";
+
+            LibraryChannel channel = this.GetChannel();
+            try
+            {
+                var message = new MessageData
+                {
+                    strRecipient = "!statis",
+                    strSender = strSender,
+                    strSubject = strSubject,
+                    strMime = "text/xml",
+                    strBody = strXml
+                };
+                MessageData[] messages = new MessageData[]
+                {
+                    message
+                };
+
+                REDO:
+                long lRet = channel.SetMessage(
+                    "send",
+                    "",
+                    messages,
+                    out MessageData[] output_messages,
+                    out strError);
+                if (lRet == -1)
+                {
+                    // 不使用 prompt
+                    if (channel.ErrorCode == ErrorCode.AlreadyExist)
+                        return -2;
+                    if (prompt == null)
+                        return -1;
+                    // TODO: 遇到出错，提示人工介入处理
+                    if (prompt != null)
+                    {
+                        var result = prompt(channel,
+                            strError + "\r\n\r\n(重试) 重试写入; (取消) 取消写入",
+                            new string[] { "重试", "取消" },
+                            10);
+                        if (result == "重试")
+                            goto REDO;
+                        prompt_action = result;
+                        return -1;
+                    }
+                }
+
+                return (int)lRet;
+            }
+            finally
+            {
+                this.ReturnChannel(channel);
+            }
         }
     }
 

@@ -1,25 +1,21 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Text;
 using System.Windows.Forms;
 using System.Xml;
 using System.Diagnostics;
 using System.Threading;
 using System.IO;
+using System.Web;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 using DigitalPlatform;
-using DigitalPlatform.CirculationClient;
-using DigitalPlatform.Xml;
-using DigitalPlatform.IO;
 using DigitalPlatform.Text;
-
 using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.RFID.UI;
 using DigitalPlatform.RFID;
-using DigitalPlatform.Core;
+using DigitalPlatform.Xml;
+using DigitalPlatform.CirculationClient;
+using DigitalPlatform.CommonControl;
 
 namespace dp2Circulation
 {
@@ -97,7 +93,49 @@ namespace dp2Circulation
             this.entityEditControl1.GetValueTable += new GetValueTableEventHandler(entityEditControl1_GetValueTable);
 
             BeginSwitchFocus("load_barcode", true);
+
+            bool _hide_dialog = false;
+            int _hide_dialog_count = 0;
+
+            Task.Run(() =>
+            {
+                WriteStatisLogs(_cancel.Token,
+                    (c, m, buttons, sec) =>
+                    {
+                        DialogResult result = DialogResult.Yes;
+                        if (_hide_dialog == false)
+                        {
+                            this.Invoke((Action)(() =>
+                            {
+                                result = MessageDialog.Show(this,
+                            m,
+                            MessageBoxButtons.YesNoCancel,
+                            MessageBoxDefaultButton.Button1,
+                            "此后不再出现本对话框",
+                            ref _hide_dialog,
+                            buttons,
+                            sec);
+                            }));
+                            _hide_dialog_count = 0;
+                        }
+                        else
+                        {
+                            _hide_dialog_count++;
+                            if (_hide_dialog_count > 10)
+                                _hide_dialog = false;
+                        }
+
+                        if (result == DialogResult.Yes)
+                            return buttons[0];
+                        else if (result == DialogResult.No)
+                            return buttons[1];
+                        return buttons[2];
+                    }
+                    );
+            });
         }
+
+        CancellationTokenSource _cancel = new CancellationTokenSource();
 
         void entityEditControl1_GetValueTable(object sender, GetValueTableEventArgs e)
         {
@@ -114,19 +152,6 @@ namespace dp2Circulation
 
         private void QuickChangeEntityForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-#if NO
-            if (stop != null)
-            {
-                if (stop.State == 0)    // 0 表示正在处理
-                {
-                    MessageBox.Show(this, "请在关闭窗口前停止正在进行的长时操作。");
-                    e.Cancel = true;
-                    return;
-                }
-
-            }
-#endif
-
             if (this.entityEditControl1.Changed == true)
             {
                 // 警告尚未保存
@@ -141,6 +166,8 @@ namespace dp2Circulation
                     e.Cancel = true;
                     return;
                 }
+
+                _cancel?.Cancel();
             }
 
         }
@@ -435,14 +462,23 @@ false);
             if (need == false)
                 return 0;
 
+
+
             string strError = "";
             this.ShowMessage("正在写入 RFID 标签");
             try
             {
+                // 检查 dp2library 版本。因为写入统计日志，对 dp2library 版本有一定要求
+                if (StringUtil.CompareVersion(Program.MainForm.ServerVersion, "3.14") < 0)
+                {
+                    strError = $"写入 RFID 标签功能要求 dp2library 版本为 3.14 或以上。(当前连接的 dp2library 版本号为 {Program.MainForm.ServerVersion})";
+                    goto ERROR1;
+                }
+
                 int nRet = this.entityEditControl1.GetData(
-                    true,
-                    out string strXml,
-                    out strError);
+                true,
+                out string strXml,
+                out strError);
                 if (nRet == -1)
                     goto ERROR1;
 
@@ -451,14 +487,16 @@ false);
                 {
                     dom.LoadXml(strXml);
                 }
-                catch(Exception ex)
+                catch (Exception ex)
                 {
                     strError = "记录 XML 装入 XMLDOM 时出现异常: " + ex.Message;
                     goto ERROR1;
                 }
 
-                BookItem item = new BookItem();
-                item.RecordDom = dom;
+                BookItem item = new BookItem
+                {
+                    RecordDom = dom
+                };
 
                 LogicChipItem chip = EntityEditForm.BuildChip(item);
                 _right = chip;
@@ -481,12 +519,21 @@ false);
                     goto CANCEL0;
                 }
 
-                nRet = SaveNewChip(out strError);
+                nRet = SaveNewChip(out TagInfo new_tag_info,
+                    out strError);
                 if (nRet == -1)
                     goto ERROR1;
 
                 // TODO: 遇到出错，出现对话框提醒重试装入和写入？
 
+                // 写入统计日志
+                StatisLog log = new StatisLog
+                {
+                    BookItem = item,
+                    ReaderName = _tagExisting.ReaderName,
+                    NewTagInfo = new_tag_info
+                };
+                AddWritingLog(log);
                 return 1;
             }
             finally
@@ -606,8 +653,11 @@ false);
             e.Text = "准备写入 RFID 标签，请在读写器上放置贴有标签的图书 ...";
         }
 
-        int SaveNewChip(out string strError)
+        int SaveNewChip(
+            out TagInfo new_tag_info,
+            out string strError)
         {
+            new_tag_info = null;
             strError = "";
 
             RfidChannel channel = StartRfidChannel(
@@ -620,7 +670,7 @@ out strError);
             }
             try
             {
-                TagInfo new_tag_info = LogicChipItem.ToTagInfo(
+                new_tag_info = LogicChipItem.ToTagInfo(
                     _tagExisting.TagInfo,
                     _right);
                 NormalResult result = channel.Object.WriteTagInfo(
@@ -643,6 +693,149 @@ out strError);
             finally
             {
                 EndRfidChannel(channel);
+            }
+        }
+
+        #endregion
+
+        #region 独立线程写入统计日志
+
+        class StatisLog
+        {
+            public BookItem BookItem { get; set; }
+            public string ReaderName { get; set; }
+            public TagInfo NewTagInfo { get; set; }
+            public string Xml { get; set; }
+
+            // 写入出错次数
+            public int ErrorCount { get; set; }
+        }
+
+        object _lockStatis = new object();
+
+        List<StatisLog> _statisLogs = new List<StatisLog>();
+
+        // 循环写入统计日志的过程
+        void WriteStatisLogs(CancellationToken token,
+            LibraryChannelExtension.delegate_prompt prompt)
+        {
+            // TODO: 需要捕获异常，写入错误日志
+            try
+            {
+                while (token.IsCancellationRequested == false)
+                {
+                    List<StatisLog> error_items = new List<StatisLog>();
+                    // 循环过程不怕 _statisLogs 数组后面被追加新内容
+                    int count = _statisLogs.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        var log = _statisLogs[i];
+                        Program.MainForm.OperHistory.AppendHtml($"<div class='debug recpath'>写册 '{HttpUtility.HtmlEncode(log.BookItem.Barcode)}' 的 RFID 标签，记入统计日志</div>");
+                        // parameters:
+                        //      prompt_action   [out] 重试/中断
+                        // return:
+                        //      -2  UID 已经存在
+                        //      -1  出错。注意 prompt_action 中有返回值，表明已经提示和得到了用户反馈
+                        //      其他  成功
+                        int nRet = WriteStatisLog("sender",
+                            "subject",
+                            log.Xml,
+                            prompt,
+                            out string prompt_action,
+                            out string strError);
+                        if (nRet == -2)
+                        {
+                            // 如果 UID 重复了，跳过这一条
+                            _statisLogs.RemoveAt(i);
+                            i--;
+                            Program.MainForm.OperHistory.AppendHtml($"<div class='debug error'>{HttpUtility.HtmlEncode(strError)}</div>");
+                            continue;
+                        }
+                        else if (nRet == -1)
+                        {
+                            if (prompt_action == "skip" || prompt_action == "取消")
+                            {
+                                // 跳过这一条
+                                _statisLogs.RemoveAt(i);
+                                i--;
+                                Program.MainForm.OperHistory.AppendHtml($"<div class='debug error'>遇到错误 {HttpUtility.HtmlEncode(strError)} 后用户选择跳过</div>");
+                                continue;
+                            }
+
+                            log.ErrorCount++;
+                            error_items.Add(log);
+                            this.ShowMessage(strError, "red", true);
+                            // TODO: 输出到操作历史
+                            Program.MainForm.OperHistory.AppendHtml($"<div class='debug error'>{HttpUtility.HtmlEncode(strError)}</div>");
+                        }
+                        else
+                            Program.MainForm.OperHistory.AppendHtml($"<div class='debug green'>写入成功</div>");
+                    }
+
+                    lock (_lockStatis)
+                    {
+                        _statisLogs.RemoveRange(0, count);
+                        _statisLogs.AddRange(error_items);  // 准备重做
+                    }
+
+                    if (error_items.Count > 0)
+                        Task.Delay(TimeSpan.FromMinutes(1), token).Wait();
+                    else
+                        Task.Delay(500, token).Wait();
+                }
+            }
+            catch(Exception ex)
+            {
+                this.ShowMessage($"后台线程出现异常: {ex.Message}", "red", true);
+                this.Invoke((Action)(() =>
+                {
+                    this.Enabled = false;   // 禁用界面，迫使操作者关闭窗口重新打开
+                }));
+            }
+        }
+
+        void AddWritingLog(StatisLog log)
+        {
+            XmlDocument dom = new XmlDocument();
+            dom.LoadXml("<root />");
+            DomUtil.SetElementText(dom.DocumentElement,
+                "action", "writeRfidTag");
+
+            DomUtil.SetElementText(dom.DocumentElement,
+    "uid", Guid.NewGuid().ToString());
+
+            DomUtil.SetElementText(dom.DocumentElement,
+    "type", "item");
+
+            DomUtil.SetElementText(dom.DocumentElement,
+                "itemBarcode", log.BookItem.Barcode);
+            DomUtil.SetElementText(dom.DocumentElement,
+                "itemLocation", log.BookItem.Location);
+            // 2019/6/28
+            DomUtil.SetElementText(dom.DocumentElement,
+    "itemRefID", log.BookItem.RefID);
+
+            DomUtil.SetElementText(dom.DocumentElement,
+"tagProtocol", "ISO15693");
+            DomUtil.SetElementText(dom.DocumentElement,
+"tagReaderName", log.ReaderName);
+            DomUtil.SetElementText(dom.DocumentElement,
+    "tagAFI", Element.GetHexString(log.NewTagInfo.AFI));
+            DomUtil.SetElementText(dom.DocumentElement,
+    "tagBlockSize", log.NewTagInfo.BlockSize.ToString());
+            DomUtil.SetElementText(dom.DocumentElement,
+"tagMaxBlockCount", log.NewTagInfo.MaxBlockCount.ToString());
+            DomUtil.SetElementText(dom.DocumentElement,
+    "tagDSFID", Element.GetHexString(log.NewTagInfo.DSFID));
+            DomUtil.SetElementText(dom.DocumentElement,
+    "tagUID", log.NewTagInfo.UID);
+            DomUtil.SetElementText(dom.DocumentElement,
+    "tagBytes", Convert.ToBase64String(log.NewTagInfo.Bytes));
+
+            log.Xml = dom.OuterXml;
+            lock (_lockStatis)
+            {
+                _statisLogs.Add(log);
             }
         }
 
@@ -750,6 +943,14 @@ out strError);
                 }
             }
 
+            // 2019/6/28
+            // 自动检查 refID 元素
+            if (string.IsNullOrEmpty(this.entityEditControl1.RefID))
+            {
+                this.entityEditControl1.RefID = Guid.NewGuid().ToString();
+                bChanged = true;
+            }
+
             if (bChanged == true)
                 return 1;
 
@@ -822,12 +1023,10 @@ out strError);
                     goto ERROR1;
                 }
 
-                EntityInfo[] entities = null;
-                EntityInfo[] errorinfos = null;
 
                 // 构造需要提交的实体信息数组
                 int nRet = BuildSaveEntities(
-                    out entities,
+                    out EntityInfo[] entities,
                     out strError);
                 if (nRet == -1)
                     goto ERROR1;
@@ -835,12 +1034,11 @@ out strError);
                 if (entities == null || entities.Length == 0)
                     return 0; // 没有必要保存
 
-
                 nRet = SaveEntityRecords(
                     bEnableControls,
                     this.BiblioRecPath,
                     entities,
-                    out errorinfos,
+                    out EntityInfo[] errorinfos,
                     out strError);
 
                 this.entityEditControl1.Changed = false;    // 2007/4/4
