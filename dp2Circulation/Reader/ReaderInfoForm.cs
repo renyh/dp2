@@ -5268,13 +5268,21 @@ MessageBoxDefaultButton.Button2);
             // Program.MainForm.StatusBarMessage = "等待扫描指纹...";
             try
             {
-                NormalResult getstate_result = await FingerprintGetState("getLibraryServerUID");
+                NormalResult getstate_result = await FingerprintGetState("");
+                if (getstate_result.Value == -1)
+                {
+                    strError = $"指纹中心当前状态不正确：{getstate_result.ErrorInfo}";
+                    goto ERROR1;
+                }
+
+                getstate_result = await FingerprintGetState("getLibraryServerUID");
                 if (getstate_result.Value == -1)
                 {
                     strError = getstate_result.ErrorInfo;
                     goto ERROR1;
                 }
-                else if (getstate_result.ErrorCode != Program.MainForm.ServerUID)
+                else if (getstate_result.ErrorCode != null &&
+                    getstate_result.ErrorCode != Program.MainForm.ServerUID)
                 {
                     strError = $"指纹中心所连接的 dp2library 服务器 UID {getstate_result.ErrorCode} 和内务当前所连接的 UID {Program.MainForm.ServerUID} 不同。无法进行指纹登记";
                     goto ERROR1;

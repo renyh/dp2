@@ -18,6 +18,10 @@ using DigitalPlatform.Text;
 using DigitalPlatform.IO;
 using DigitalPlatform.CirculationClient;
 using DigitalPlatform.Interfaces;
+using DigitalPlatform.RFID;
+using DigitalPlatform.Core;
+
+using dp2Circulation.Charging;
 
 namespace dp2Circulation
 {
@@ -158,11 +162,439 @@ namespace dp2Circulation
                 SetReaderHtmlString("(空)");
             }
 
-            // this.BeginInvoke(new Action(FillLibraryCodeListMenu));
+            _errorTable = new ErrorTable((s) =>
+            {
+                this.Invoke((Action)(() =>
+                {
+                    if (this.label_rfidMessage.Text != s)
+                    {
+                        if (this.label_rfidMessage.Visible == false)
+                            this.label_rfidMessage.Visible = true;
 
-            Task.Run(() => { InitialRfidChannel(); });
+                        if (string.IsNullOrEmpty(s))
+                        {
+                            this.label_rfidMessage.Text = _rfidNumber;
+
+                            this.label_rfidMessage.BackColor = Color.White;
+                            this.label_rfidMessage.ForeColor = Color.Black;
+                        }
+                        else
+                        {
+                            this.label_rfidMessage.Text = s;
+
+                            this.label_rfidMessage.BackColor = Color.DarkRed;
+                            this.label_rfidMessage.ForeColor = Color.White;
+                        }
+                    }
+                }));
+            });
+
+            RfidManager.SetError += RfidManager_SetError;
+            Program.MainForm.TagChanged += MainForm_TagChanged;
+            InitialSendKey();
+            RfidManager.ClearCache();
+            if (string.IsNullOrEmpty(RfidManager.Url) == false)
+            {
+                this.label_rfidMessage.Visible = true;
+                /*
+                var result = RfidManager.GetState("");
+                if (result.Value == -1)
+                    this.ShowMessage($"RFID 中心当前处于 {result.ErrorCode} 状态({result.ErrorInfo})", "red", true);
+                    */
+                var result = RfidManager.EnableSendkey(false);
+            }
+            else
+            {
+                this.label_rfidMessage.Visible = false;
+            }
+            InitialEasForm();
+            ShowEasForm(false);
+
+            // Task.Run(() => { InitialRfidChannel(); });
         }
 
+        // 新 Tag 到来
+        private void MainForm_TagChanged(object sender, TagChangedEventArgs e)
+        {
+            try
+            {
+                DateTime now = DateTime.Now;
+                {
+                    if (e.AddPatrons != null)
+                        foreach (var tag in e.AddPatrons)
+                        {
+                            SendKey(tag, now);
+                        }
+                    if (e.UpdatePatrons != null)
+                        foreach (var tag in e.UpdatePatrons)
+                        {
+                            SendKey(tag, now);
+                        }
+                    if (e.RemovePatrons != null)
+                        foreach (var tag in e.RemovePatrons)
+                        {
+                            if (tag.OneTag != null)
+                                SetLastTime(tag.OneTag.UID, now);
+                        }
+                }
+
+                {
+                    if (e.AddBooks != null)
+                        foreach (var tag in e.AddBooks)
+                        {
+                            SendKey(tag, now);
+                        }
+                    if (e.RemoveBooks != null)
+                        foreach (var tag in e.RemoveBooks)
+                        {
+                            if (tag.OneTag != null)
+                                SetLastTime(tag.OneTag.UID, now);
+                        }
+                    if (e.UpdateBooks != null)
+                        foreach (var tag in e.UpdateBooks)
+                        {
+                            SendKey(tag, now);
+                        }
+                }
+
+                RefreshRfidTagNumber();
+                CheckMultiPatronCard();
+            }
+            catch (Exception ex)
+            {
+                WriteErrorLog($"MainForm_TagChanged exception: {ExceptionUtil.GetDebugText(ex)}");
+                throw new Exception(ex.Message, ex);
+            }
+        }
+
+        // 检查当前是否有多张读者卡持续放在读卡器上
+        void CheckMultiPatronCard()
+        {
+            var count = TagList.Patrons.Count;
+            if (count > 1)
+                SetError("multi", $"请拿走多余的读者卡(当前一共放了 {count} 张)");
+            else
+                SetError("multi", null);
+        }
+
+        string _rfidNumber = "";
+
+        void RefreshRfidTagNumber()
+        {
+            _rfidNumber = $"{TagList.Books.Count}:{TagList.Patrons.Count}";
+            this.Invoke((Action)(() =>
+            {
+                if (this.label_rfidMessage.Visible == false)
+                    this.label_rfidMessage.Visible = true;
+
+                if (this.label_rfidMessage.BackColor == Color.White)
+                {
+                    // 标签总数显示 图书+读者卡
+                    this.label_rfidMessage.Text = _rfidNumber;
+                }
+            }));
+        }
+
+        // 把存量的 PII 发送出去
+        void InitialSendKey()
+        {
+            DateTime now = DateTime.Now;
+
+            var books = TagList.Books;
+            if (books.Count > 0)
+            {
+                foreach (var tag in books)
+                {
+                    SendKey(tag, now);
+                }
+            }
+
+            var patrons = TagList.Patrons;
+            if (patrons.Count > 0)
+            {
+                foreach (var tag in patrons)
+                {
+                    SendKey(tag, now);
+                }
+            }
+
+            RefreshRfidTagNumber();
+            CheckMultiPatronCard();
+        }
+
+
+        public static string GetPII(TagInfo tagInfo)
+        {
+            LogicChip chip = LogicChip.From(tagInfo.Bytes,
+(int)tagInfo.BlockSize,
+"" // tagInfo.LockStatus
+);
+            return chip.FindElement(ElementOID.PII)?.Text;
+        }
+
+        public static string GetTOU(TagInfo tagInfo)
+        {
+            LogicChip chip = LogicChip.From(tagInfo.Bytes,
+(int)tagInfo.BlockSize,
+"" // tagInfo.LockStatus
+);
+            return chip.FindElement(ElementOID.TypeOfUsage)?.Text;
+        }
+
+        // UID --> 最近出现时间 的对照表
+        // 用于平滑标签拿放的事件。原理是，如果一个标签最后离开和后来一次到来之间的时间差太小，则放弃这一次到来事件
+        Hashtable _uidTable = new Hashtable();
+        // private readonly Object _syncRoot_uidTable = new object();
+
+        static TimeSpan _minDelay = TimeSpan.FromMilliseconds(500);
+
+        DateTime GetLastTime(string uid)
+        {
+            lock (_uidTable.SyncRoot)
+            {
+                if (_uidTable.ContainsKey(uid) == false)
+                    return DateTime.MinValue;
+                DateTime time = (DateTime)_uidTable[uid];
+                return time;
+            }
+        }
+
+        void SetLastTime(string uid, DateTime now)
+        {
+            if (string.IsNullOrEmpty(uid))
+                return;
+
+            lock (_uidTable.SyncRoot)
+            {
+                if (_uidTable.Count > 1000)
+                    _uidTable.Clear();  // TODO: 可以优化为每隔一段时间自动清除太旧的事项
+                _uidTable[uid] = now;
+            }
+        }
+
+        public bool PauseRfid = true;
+
+        void SendKey(TagAndData data, DateTime now)
+        {
+            if (this.PauseRfid)
+                return;
+
+            SetError("sendKey", null);
+
+            if (data.OneTag.Protocol == InventoryInfo.ISO14443A)
+            {
+                // 检查时间差额
+                {
+                    DateTime last_time = GetLastTime(data.OneTag.UID);
+                    if (now - last_time < _minDelay)
+                    {
+                        Debug.WriteLine("smooth ISO14443A");
+                        return;
+                    }
+                }
+
+                SetLastTime(data.OneTag.UID, DateTime.Now);
+
+                TaskList.Sound(0);
+
+                string text = $"uid:{data.OneTag.UID},tou:80";
+                this.Invoke((Action)(() =>
+                {
+                    this.textBox_input.Text = text;
+                }));
+                AsyncDoAction(this.FuncState, text);
+                return;
+            }
+
+            if (data.OneTag.TagInfo == null)
+            {
+                //Debug.WriteLine("TagInfo == null");
+                return;
+            }
+
+            string pii = GetPII(data.OneTag.TagInfo);
+
+            if (string.IsNullOrEmpty(pii))
+            {
+                // TODO: 改进显示方式
+                SetError("sendKey", $"此标签(UID={data.OneTag.UID})无法解析出 PII 元素");
+                return;
+            }
+
+            // 缓存起来
+            if (_easForm != null)
+                _easForm.SetUID(pii, data.OneTag.UID);
+
+            Debug.WriteLine($"pii={pii}");
+
+            // 检查时间差额
+            {
+                DateTime last_time = GetLastTime(data.OneTag.UID);
+                if (now - last_time < _minDelay)
+                {
+                    Debug.WriteLine("smooth ISO15693");
+                    return;
+                }
+            }
+
+            SetLastTime(data.OneTag.UID, now);
+
+            string strTypeOfUsage = GetTOU(data.OneTag.TagInfo);
+            if (string.IsNullOrEmpty(strTypeOfUsage))
+                strTypeOfUsage = "10";
+            // 2019/6/13
+            // 注意：特殊处理!
+            else if (strTypeOfUsage == "32")
+                strTypeOfUsage = "10";
+
+            if (strTypeOfUsage[0] == '8')
+                TaskList.Sound(0);
+            else
+                TaskList.Sound(1);
+
+            if (strTypeOfUsage[0] == '1'
+                // && _easForm.ErrorCount > 0
+                )
+            {
+                // 尝试自动修正 EAS
+                // result.Value
+                //      -1  出错
+                //      0   ListsView 中没有找到事项
+                //      1   发生了修改
+                var eas_result = _easForm.TryCorrectEas(data.OneTag.UID, pii);
+                if (eas_result.Value == -1)
+                {
+                    // TODO SetError()
+                    // this.ShowMessage($"尝试自动修正 EAS 时出错 '{eas_result.ErrorInfo}'", "red", true);
+                    TaskList.Sound(-1);
+                    return;
+                }
+
+                if (eas_result.Value == 1)
+                {
+                    TaskList.Sound(2);
+
+                    // 如果所有错误均被消除，则 EasForm 要隐藏
+                    if (_easForm.ErrorCount == 0)
+                    {
+                        _easForm.ClearMessage();
+                        this.Invoke((Action)(() =>
+                        {
+                            ShowEasForm(false);
+                        }));
+                    }
+
+                    if (this.StateSpeak != "[不朗读]")
+                        Program.MainForm.Speak("自动修正 EAS 成功");
+                    this.ShowMessageAutoClear("自动修正 EAS 成功", "green", 2000, true);
+                    // 本次标签触发了自动修正动作，并操作成功，后面就不再继续进行借书或者还书操作了
+                    return;
+                }
+
+                // TODO: 如果 errorCount > 0，则搜索 tasklist，如果 PII 找到匹配则放弃继续操作
+                {
+                    var task = this._taskList.FindTaskByItemBarcode(pii);
+                    if (task != null
+                        && (task.Color != "red"))
+                    {
+                        // TODO: 发出尖锐声音提示操作者注意被吞掉的号码
+                        TaskList.Sound(-1);
+
+                        // 延时 ShowMessage
+                        this.ShowMessageAutoClear($"任务 {pii} 被忽略(和当前任务列表(count={_taskList.Count})重复)",
+                            "yellow",
+                            5000,
+                            true);
+                        // 让 task 闪烁几次，让操作者容易看到
+                        FlashTask(task, 5);
+                        return;
+                    }
+                }
+            }
+
+            {
+                string text = $"pii:{pii},tou:{strTypeOfUsage}";
+
+                this.Invoke((Action)(() =>
+                {
+                    this.textBox_input.Text = text;
+                }));
+                AsyncDoAction(this.FuncState, text);
+            }
+        }
+
+        public DigitalPlatform.Core.RecordLockCollection _tasklocks = new DigitalPlatform.Core.RecordLockCollection();
+
+        // TODO: 针对同一个 task 对象的线程同一时间只能允许一个运行
+        void FlashTask(ChargingTask task, int count)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    var hashcode = task.GetHashCode().ToString();
+                    _tasklocks.LockForWrite(hashcode);
+                    try
+                    {
+                        string save_color = task.Color;
+                        for (int i = 0; i < count; i++)
+                        {
+                            Thread.Sleep(500);
+                            task.Color = "";
+                            this.DisplayTask("refresh", task);
+                            Thread.Sleep(500);
+                            task.Color = save_color;
+                            this.DisplayTask("refresh", task);
+                        }
+                        SetColorList(); // 2019/9/4 最后刷新一次 colorlist
+                    }
+                    finally
+                    {
+                        _tasklocks.UnlockForWrite(hashcode);
+                    }
+                }
+                catch
+                {
+
+                }
+            });
+        }
+
+        private void RfidManager_SetError(object sender, SetErrorEventArgs e)
+        {
+            SetError("rfid", e.Error);
+        }
+
+        // result.Value:
+        //      -1  出错
+        //      0   Off
+        //      1   On
+        internal NormalResult GetEAS(string reader_name,
+            string tag_name)
+        {
+            return _easForm.GetEAS(reader_name, tag_name);
+        }
+
+        internal NormalResult SetEAS(
+            ChargingTask task,
+            string reader_name,
+            string tag_name,
+            bool enable)
+        {
+            var result = _easForm.SetEAS(task, reader_name, tag_name, enable);
+            if (result.Value != 1)
+            {
+                _easForm.ShowMessage($"请把图书放回读卡器以修正 EAS\r\n拿放动作不要太快，给读卡器一点时间", "yellow", true);
+                this.Invoke((Action)(() =>
+                {
+                    // 显示 EasForm
+                    ShowEasForm(true);
+                }));
+            }
+            return result;
+        }
+
+        /*
         public RfidChannel _rfidChannel = null;
 
         void InitialRfidChannel()
@@ -209,6 +641,8 @@ namespace dp2Circulation
                 }
             }
         }
+
+            */
 
 #if NO
         string _focusLibraryCode = "";
@@ -308,13 +742,16 @@ namespace dp2Circulation
 
         private void QuickChargingForm_FormClosed(object sender, FormClosedEventArgs e)
         {
-            OpenRfidCapture(false);
+            Program.MainForm.TagChanged -= MainForm_TagChanged;
+            RfidManager.SetError -= RfidManager_SetError;
+
+            //OpenRfidCapture(false);
+            //ReleaseRfidChannel();
 
 #if NO
             if (Program.MainForm != null)
                 Program.MainForm.Move -= new EventHandler(MainForm_Move);
 #endif
-            ReleaseRfidChannel();
 
             this.commander.Destroy();
 
@@ -342,6 +779,8 @@ namespace dp2Circulation
 
             if (_patronSummaryForm != null)
                 _patronSummaryForm.Close();
+
+            DestroyEasForm();
 
             // this.Channel.Idle -= new IdleEventHandler(Channel_Idle);
 
@@ -438,7 +877,6 @@ namespace dp2Circulation
             this.panel_input.BackColor = this.BackColor;
             this.panel_input.ForeColor = this.ForeColor;
             this.pictureBox_action.BackColor = this.BackColor;
-
         }
 
         void commander_IsBusy(object sender, IsBusyEventArgs e)
@@ -448,7 +886,7 @@ namespace dp2Circulation
 
         public void DoEnter()
         {
-            AsyncDoAction(this.FuncState, 
+            AsyncDoAction(this.FuncState,
                 GetUpperCase(this.textBox_input.Text));
         }
 
@@ -1789,6 +2227,13 @@ System.Runtime.InteropServices.COMException (0x800700AA): 请求的资源在使�
             task.ID = strTaskID;
             if (func == FuncState.LoadPatronInfo)
             {
+                // 此处限定只能是读者证条码号
+                if (IsReaderType(strText) == -1)
+                {
+                    MessageBox.Show(this, "请先输入读者证条码号，然后再输入册条码号");
+                    this.textBox_input.SelectAll();
+                    return;
+                }
                 task.ReaderBarcode = GetContent(strText);   // strText
                 task.Action = "load_reader_info";
             }
@@ -1964,6 +2409,34 @@ System.Runtime.InteropServices.COMException (0x800700AA): 请求的资源在使�
                 return value;
             value = (string)table[name.ToUpper()];
             return value;
+        }
+
+        // return:
+        //      1   是读者类型
+        //      0   不清楚
+        //      -1  不是读者类型
+        static int IsReaderType(string strText)
+        {
+            if (string.IsNullOrEmpty(strText))
+                return -1;
+            if (strText.IndexOf(":") == -1)
+                return 0;
+            Hashtable table = StringUtil.ParseParameters(strText, ',', ':');
+            string strTypeOfUsage = GetValue(table, "tou");
+
+            // 注意：特殊处理!
+            if (strTypeOfUsage == "32")
+                strTypeOfUsage = "10";
+
+            if (string.IsNullOrEmpty(strTypeOfUsage) == false && strTypeOfUsage[0] == '8')
+                return 1;
+            string strBarcode = GetValue(table, "pii");
+            if (string.IsNullOrEmpty(strBarcode) == false)
+                return -1;
+            strBarcode = GetValue(table, "uid");
+            if (string.IsNullOrEmpty(strBarcode) == false)
+                return -1;
+            return 0;
         }
 
         // 获得一个字符串的 RFID 前缀类型
@@ -2388,7 +2861,8 @@ false);
                 {
                     this.toolStripMenuItem_transfer.Checked = true;
                     WillLoadReaderInfo = false;
-                    Task.Run(()=> {
+                    Task.Run(() =>
+                    {
                         this.Invoke((Action)(() =>
                         {
                             toolStripButton_selectTransferTargetLocation_Click(this, new EventArgs());
@@ -2959,6 +3433,15 @@ false);
             menuItem.Click += new EventHandler(menuItem_deleteTask_Click);
             contextMenu.Items.Add(menuItem);
 
+            // ---
+            menuSepItem = new ToolStripSeparator();
+            contextMenu.Items.Add(menuSepItem);
+
+            // 
+            menuItem = new ToolStripMenuItem("任务数 (&C)");
+            menuItem.Click += new EventHandler(menuItem_countTask_Click);
+            contextMenu.Items.Add(menuItem);
+
             // 
             if (StringUtil.IsDevelopMode() == true)
             {
@@ -3085,6 +3568,30 @@ false);
 
             // MessageBox.Show(this, strResult);
         }
+
+        // 统计当前所有成功的任务数。也就是绿色和黄色的任务数
+        void menuItem_countTask_Click(object sender, EventArgs e)
+        {
+            int count = 0;
+            int nErrorCount = 0;
+
+            // List<DpRow> rows = new List<DpRow>();
+            foreach (DpRow row in this.dpTable_tasks.Rows)
+            {
+                ChargingTask task = (ChargingTask)row.Tag;
+                if (task == null)
+                    continue;
+                if (task.State == "error")
+                    nErrorCount++;
+                if (task.Color == "green" || task.Color == "yellow")
+                    count++;
+            }
+
+            string text = $"{count} 个成功任务";
+            Program.MainForm.Speak(text);
+            this.ShowMessageAutoClear(text, "green", 5000, true);
+        }
+
 
         // 删除选定的任务
         // 如果有没有完成的任务，则需要统一中断(等待完成)，然后再删除任务
@@ -3337,11 +3844,15 @@ MessageBoxDefaultButton.Button2);
         {
             this.textBox_input.Focus();
             //OpenRfidCapture(true);
+            //Debug.WriteLine("activated");
+            this.PauseRfid = false;
         }
 
         private void QuickChargingForm_Deactivate(object sender, EventArgs e)
         {
             //OpenRfidCapture(false);
+            //Debug.WriteLine("deactivate");
+            this.PauseRfid = true;
         }
 
         private void textBox_input_Enter(object sender, EventArgs e)
@@ -3354,13 +3865,13 @@ MessageBoxDefaultButton.Button2);
 #endif
             // 扫入 3 种条码均可
             EnterOrLeavePQR(true, InputType.ALL);
-            OpenRfidCapture(true);
+            //OpenRfidCapture(true);
         }
 
         private void textBox_input_Leave(object sender, EventArgs e)
         {
             EnterOrLeavePQR(false);
-            OpenRfidCapture(false);
+            //OpenRfidCapture(false);
         }
 
         private void QuickChargingForm_Enter(object sender, EventArgs e)
@@ -3955,6 +4466,86 @@ dp2Circulation 版本: dp2Circulation, Version=2.4.5735.664, Culture=neutral, Pu
                     this.textBox_input.Focus();
                 }
             }));
+        }
+
+        EasForm _easForm = null;
+
+        private void ToolStripMenuItem_openEasForm_Click(object sender, EventArgs e)
+        {
+            InitialEasForm();
+            ShowEasForm(true);
+        }
+
+        void InitialEasForm()
+        {
+            if (_easForm == null)
+            {
+                _easForm = new EasForm();
+                _easForm.Font = this.Font;
+                _easForm.FormClosed += (sender, e) =>
+                {
+                    _easForm.Dispose();
+                    _easForm = null;
+                };
+                _easForm.EasChanged += (sender, e) =>
+                {
+                    ChargingTask task = e.Param as ChargingTask;
+                    if (task != null)
+                    {
+                        task.Color = "green";
+                        {
+                            DpRow line = FindTaskLine(task);
+                            if (line != null)
+                                line.BackColor = this.TaskBackColor;
+                        }
+                        task.State = "finish";
+                        task.ErrorInfo = "";
+                        // task.ErrorInfo = "\r\nEAS 修正成功";
+                        this.DisplayTask("refresh_and_visible", task);
+                        this.SetColorList();
+                    }
+                };
+
+                _easForm.Show(this);
+            }
+        }
+
+        void ShowEasForm(bool show)
+        {
+            /*
+            if (show)
+            {
+                if (_easForm.IsHandleCreated)
+                    _easForm.Visible = true;
+                else
+                    _easForm.Show(this);
+            }
+            else
+                _easForm.Visible = false;
+                */
+
+            _easForm.Visible = show;
+            // Program.MainForm.Activate();
+        }
+
+        void DestroyEasForm()
+        {
+            if (_easForm != null)
+            {
+                _easForm.CloseFloatingMessage();
+                _easForm.Close();
+                //_easForm.Dispose();
+                //_easForm = null;
+            }
+        }
+
+        private void ToolStripMenuItem_rfid_restartRfidCenter_Click(object sender, EventArgs e)
+        {
+            var result = RfidManager.GetState("restart");
+            if (result.Value == -1)
+                this.ShowMessage($"重启 RFID 中心时出错: {result.ErrorInfo}", "red", true);
+            else
+                this.ShowMessageAutoClear("RFID 中心已经重启", "green", 5000, true);
         }
     }
 

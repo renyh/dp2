@@ -33,11 +33,15 @@ namespace DigitalPlatform.CirculationClient
             }
         }
 
-        public void Speaking(string text)
+        public void Speaking(string text, string displayText = null)
         {
             if (Speak != null)
             {
-                Speak(null, new SpeakEventArgs { Text = text });
+                Speak(null, new SpeakEventArgs
+                {
+                    Text = text,
+                    DisplayText = displayText
+                });
             }
         }
 
@@ -100,6 +104,8 @@ namespace DigitalPlatform.CirculationClient
         public string Text { get; set; }
         public int Score { get; set; }
         public string ErrorInfo { get; set; }
+
+        public int Quality { get; set; }    // 指纹图象质量
     }
 
     public delegate void ImageReadyEventHandler(object sender,
@@ -111,6 +117,8 @@ namespace DigitalPlatform.CirculationClient
     public class ImageReadyEventArgs : EventArgs
     {
         public Image Image { get; set; }    // 注意，使用者要负责 Dispose() 这个 Image 对象
+
+        public int Quality { get; set; }    // 指纹图象质量
     }
 
     public delegate void SpeakEventHandler(object sender,
@@ -118,6 +126,9 @@ namespace DigitalPlatform.CirculationClient
 
     public class SpeakEventArgs : EventArgs
     {
+        // 语音文字
         public string Text { get; set; }
+        // 用于显示的文字。如果为空，则表示使用 Text 成员
+        public string DisplayText { get; set; }
     }
 }

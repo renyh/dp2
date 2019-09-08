@@ -15,6 +15,7 @@ using System.Xml;
 using DigitalPlatform;
 using DigitalPlatform.Core;
 using DigitalPlatform.GUI;
+using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
 using DigitalPlatform.RFID;
 using DigitalPlatform.RFID.UI;
@@ -47,7 +48,7 @@ namespace dp2Circulation
             }
         }
 
-        string _mode = "";  // auto_fix_eas 或 auto_fix_eas_and_close
+        string _mode = "";  // auto_fix_eas 或 auto_fix_eas_and_close 或它们的组合
         public string Mode
         {
             get
@@ -131,10 +132,31 @@ namespace dp2Circulation
     "auto_fix_eas",
     true);
 
+            _errorTable = new ErrorTable((s) =>
+            {
+                this.Invoke((Action)(() =>
+                {
+                    if (this.label_message.Text != s)
+                    {
+                        this.label_message.Text = s;
+
+                        this.label_message.Visible = !string.IsNullOrEmpty(s);
+                    }
+                }));
+            });
+
+            RfidManager.SetError += RfidManager_SetError;
+            Program.MainForm.TagChanged += MainForm_TagChanged;
+
             this.BeginInvoke(new Action(() =>
             {
                 this.listView_tags.Focus();
             }));
+        }
+
+        private void RfidManager_SetError(object sender, SetErrorEventArgs e)
+        {
+            SetError("rfid", e.Error);
         }
 
         private void RfidToolForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -144,14 +166,18 @@ namespace dp2Circulation
 
         private void RfidToolForm_FormClosed(object sender, FormClosedEventArgs e)
         {
+            Program.MainForm.TagChanged -= MainForm_TagChanged;
+            RfidManager.SetError -= RfidManager_SetError;
+
             if (_timerRefresh != null)
                 _timerRefresh.Dispose();
 
+#if OLD_CODE
             _rfidChannels?.Close((channel) =>
             {
                 EndRfidChannel(channel);
             });
-            //ReleaseRfidChannel();
+#endif
 
             Program.MainForm.AppInfo.SetBoolean("rfidtoolform",
     "auto_refresh",
@@ -161,6 +187,22 @@ namespace dp2Circulation
 "auto_fix_eas",
 this.toolStripButton_autoFixEas.Checked);
         }
+
+        // 新 Tag 到来、变化、消失
+        private void MainForm_TagChanged(object sender, TagChangedEventArgs e)
+        {
+            if (this.PauseRfid)
+                return;
+
+            bool auto_refresh = (bool)this.Invoke((Func<bool>)(() =>
+            {
+                return this.toolStripButton_autoRefresh.Checked;
+            }));
+
+            if (auto_refresh)
+                UpdateChipList(false);
+        }
+
 
         /*
         void SetError(string type, string error)
@@ -187,6 +229,7 @@ this.toolStripButton_autoFixEas.Checked);
                     goto ERROR1;
                 }
 
+#if OLD_CODE
                 RfidChannel channel = GetRfidChannel(
                     out strError);
                 if (channel == null)
@@ -194,15 +237,27 @@ this.toolStripButton_autoFixEas.Checked);
                     strError = $"GetRfidChannel() error: {strError}";
                     goto ERROR1;
                 }
-
+#endif
                 try
                 {
+#if NO
                     ListTagsResult result = channel.Object.ListTags("*", null);
                     if (result.Value == -1)
                     {
                         strError = $"ListTags() error. ErrorInfo={result.ErrorInfo}, ErrorCode={result.ErrorCode}";
                         goto ERROR1;
                     }
+#else
+                    List<TagAndData> tags = new List<TagAndData>();
+                    foreach(var book in TagList.Books)
+                    {
+                        if (book.OneTag.TagInfo == null)
+                            continue;
+                        tags.Add(book);
+                    }
+
+                    tags.AddRange(TagList.Patrons);
+#endif
 
                     List<Task> tasks = new List<Task>();
                     bool is_empty = false;
@@ -212,8 +267,16 @@ this.toolStripButton_autoFixEas.Checked);
                         is_empty = this.listView_tags.Items.Count == 0;
 
                         List<ListViewItem> items = new List<ListViewItem>();
+#if OLD_CODE
                         foreach (OneTag tag in result.Results)
+#else
+                        foreach (TagAndData data in tags)
+#endif
                         {
+#if !OLD_CODE
+                            var tag = data.OneTag;
+#endif
+
                             if (this.ProtocolFilter != null
                                 && StringUtil.IsInList(tag.Protocol, this.ProtocolFilter) == false)
                                 continue;
@@ -235,6 +298,11 @@ this.toolStripButton_autoFixEas.Checked);
                                     // 启动单独的线程去填充 .TagInfo
                                     tasks.Add(Task.Run(() => { GetTagInfo(item); }));
                                 }
+                                else
+                                {
+                                    if (TagInfoFilled(item) == false)
+                                        tasks.Add(Task.Run(() => { FillTagInfo(item); }));
+                                }
                             }
                             else
                             {
@@ -248,6 +316,11 @@ this.toolStripButton_autoFixEas.Checked);
                                     {
                                         // 启动单独的线程去填充 .TagInfo
                                         tasks.Add(Task.Run(() => { GetTagInfo(item); }));
+                                    }
+                                    else
+                                    {
+                                        if (TagInfoFilled(item) == false)
+                                            tasks.Add(Task.Run(() => { FillTagInfo(item); }));
                                     }
                                 }
                             }
@@ -320,10 +393,21 @@ this.toolStripButton_autoFixEas.Checked);
 
                                 if (this._mode.StartsWith("auto_fix_eas"))
                                 {
-                                    this.Invoke((Action)(() =>
+                                    try
                                     {
-                                        AutoFixEas(channel);
-                                    }));
+                                        this.Invoke((Action)(() =>
+                                        {
+                                            AutoFixEas(
+#if OLD_CODE
+                                                channel
+#endif
+                                                );
+                                        }));
+                                    }
+                                    catch (ObjectDisposedException)
+                                    {
+
+                                    }
                                 }
                             }
                         });
@@ -351,7 +435,9 @@ this.toolStripButton_autoFixEas.Checked);
                 }
                 finally
                 {
+#if OLD_CODE
                     ReturnRfidChannel(channel);
+#endif
                 }
 
                 ERROR1:
@@ -377,9 +463,11 @@ this.toolStripButton_autoFixEas.Checked);
                 //item.BackColor = SystemColors.Window;
                 //item.ForeColor = SystemColors.WindowText;
 
-                item.BackColor = item.ListView.BackColor;
-                item.ForeColor = item.ListView.ForeColor;
-
+                if (item.ListView != null)
+                {
+                    item.BackColor = item.ListView.BackColor;
+                    item.ForeColor = item.ListView.ForeColor;
+                }
                 return;
             }
 
@@ -521,6 +609,90 @@ this.toolStripButton_autoFixEas.Checked);
             return null;
         }
 
+        void FillTagInfo(ListViewItem item)
+        {
+            ItemInfo item_info = (ItemInfo)item.Tag;
+            OneTag tag = item_info.OneTag;
+            if (tag.Protocol == InventoryInfo.ISO14443A)
+                return; // 暂时还不支持对 14443A 的卡进行 GetTagInfo() 操作
+
+            if (tag.TagInfo == null)
+                return;
+
+            string strError = "";
+            try
+            {
+                string hex_string = Element.GetHexString(tag.TagInfo.Bytes, "4");
+
+                string chip_parse_error = "";
+                try
+                {
+                    item_info.LogicChipItem = LogicChipItem.FromTagInfo(tag.TagInfo);
+                    item_info.LogicChipItem.PropertyChanged += LogicChipItem_PropertyChanged;
+                }
+                catch (Exception ex)
+                {
+                    chip_parse_error = ex.Message;
+                }
+
+                this.Invoke((Action)(() =>
+                {
+                    // 2019/2/27
+                    // 刷新 ReaderName 列
+                    {
+                        string new_readername = tag.TagInfo.ReaderName;
+                        if (string.IsNullOrEmpty(new_readername))
+                            new_readername = tag.ReaderName;
+
+                        string old_readername = ListViewUtil.GetItemText(item, COLUMN_READERNAME);
+                        if (old_readername != new_readername)
+                            ListViewUtil.ChangeItemText(item, COLUMN_READERNAME, new_readername);
+                    }
+
+                    if (item_info.LogicChipItem != null)    // 2019/7/6
+                    {
+                        string pii = item_info.LogicChipItem.PrimaryItemIdentifier;
+                        // ListViewUtil.ChangeItemText(item, COLUMN_PII, pii);
+                        SetItemPIIColumn(item, pii, true);
+                        if (this.SelectedPII != null
+                            && pii == this.SelectedPII)
+                            item.Font = new Font(item.Font, FontStyle.Bold);
+                    }
+                }));
+
+                if (string.IsNullOrEmpty(chip_parse_error) == false)
+                {
+                    strError = chip_parse_error;
+                    goto ERROR1;
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                strError = "GetTagInfo() 出现异常: " + ex.Message;
+                goto ERROR1;
+            }
+
+            ERROR1:
+            this.Invoke((Action)(() =>
+            {
+                ListViewUtil.ChangeItemText(item, COLUMN_PII, "error:" + strError);
+                // 把 item 修改为红色背景，表示出错的状态
+                SetItemColor(item, "error");
+            }));
+        }
+
+        // TagInfo 是否已经填充过了？ 
+        static bool TagInfoFilled(ListViewItem item)
+        {
+            ItemInfo item_info = (ItemInfo)item.Tag;
+            OneTag tag = item_info.OneTag;
+            if (tag.Protocol == InventoryInfo.ISO14443A)
+                return true; // 暂时还不支持对 14443A 的卡进行 GetTagInfo() 操作
+
+            return item_info.LogicChipItem != null;
+        }
+
         void GetTagInfo(ListViewItem item)
         {
             ItemInfo item_info = (ItemInfo)item.Tag;
@@ -528,6 +700,7 @@ this.toolStripButton_autoFixEas.Checked);
             if (tag.Protocol == InventoryInfo.ISO14443A)
                 return; // 暂时还不支持对 14443A 的卡进行 GetTagInfo() 操作
 
+#if OLD_CODE
             RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
@@ -535,10 +708,16 @@ this.toolStripButton_autoFixEas.Checked);
                 strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
-
+#else
+            string strError = "";
+#endif
             try
             {
+#if OLD_CODE
                 GetTagInfoResult result = channel.Object.GetTagInfo("*", tag.UID);
+#else
+                GetTagInfoResult result = RfidManager.GetTagInfo("*", tag.UID);
+#endif
                 if (result.Value == -1)
                 {
                     strError = result.ErrorInfo;
@@ -599,7 +778,9 @@ this.toolStripButton_autoFixEas.Checked);
             }
             finally
             {
+#if OLD_CODE
                 ReturnRfidChannel(channel);
+#endif
             }
             ERROR1:
             this.Invoke((Action)(() =>
@@ -682,41 +863,48 @@ this.toolStripButton_autoFixEas.Checked);
 
         private void listView_tags_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (this.listView_tags.SelectedItems.Count == 1)
+            try
             {
-                ItemInfo item_info = (ItemInfo)this.listView_tags.SelectedItems[0].Tag;
-                OneTag tag = item_info.OneTag;
-                // var tag_info = tag.TagInfo;
-
-                this.SelectedTag = tag;
-                this.button_OK.Enabled = true;
-
-                this.chipEditor1.LogicChipItem = item_info.LogicChipItem;
-
-                if (string.IsNullOrEmpty(item_info.Xml) == false)
+                if (this.listView_tags.SelectedItems.Count == 1)
                 {
-                    BookItem book_item = new BookItem();
-                    int nRet = book_item.SetData("",
-                        item_info.Xml,
-                        null,
-                        out string strError);
-                    if (nRet == -1)
+                    ItemInfo item_info = (ItemInfo)this.listView_tags.SelectedItems[0].Tag;
+                    OneTag tag = item_info.OneTag;
+                    // var tag_info = tag.TagInfo;
+
+                    this.SelectedTag = tag.Clone(); // 最好是深度拷贝
+                    this.button_OK.Enabled = true;
+
+                    this.chipEditor1.LogicChipItem = item_info.LogicChipItem;
+
+                    if (string.IsNullOrEmpty(item_info.Xml) == false)
                     {
-                        // 如何报错?
+                        BookItem book_item = new BookItem();
+                        int nRet = book_item.SetData("",
+                            item_info.Xml,
+                            null,
+                            out string strError);
+                        if (nRet == -1)
+                        {
+                            // 如何报错?
+                        }
+                        else
+                            this.propertyGrid_record.SelectedObject = book_item;
                     }
                     else
-                        this.propertyGrid_record.SelectedObject = book_item;
+                        this.propertyGrid_record.SelectedObject = null;
                 }
                 else
+                {
+                    this.chipEditor1.LogicChipItem = null;
                     this.propertyGrid_record.SelectedObject = null;
-            }
-            else
-            {
-                this.chipEditor1.LogicChipItem = null;
-                this.propertyGrid_record.SelectedObject = null;
 
-                this.SelectedTag = null;
-                this.button_OK.Enabled = false;
+                    this.SelectedTag = null;
+                    this.button_OK.Enabled = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                this.ShowMessage(ex.Message, "red", true);
             }
         }
 
@@ -747,6 +935,8 @@ this.toolStripButton_autoFixEas.Checked);
                     if (string.IsNullOrEmpty(pii))
                         continue;
 
+                    // TODO: 还要通过 typeOfUsage 判断是否读者证卡，如果是，要用 GetReaderInfo() 获得读者记录
+
                     long lRet = channel.GetItemInfo(null,
                         pii,
                         "xml",
@@ -775,19 +965,15 @@ this.toolStripButton_autoFixEas.Checked);
         }
 
         // 自动修复 EAS
-        void AutoFixEas(RfidChannel channel)
+        void AutoFixEas(
+#if OLD_CODE
+            RfidChannel channel
+#endif
+            )
         {
             string strError = "";
 
-#if NO
-            RfidChannel channel = GetRfidChannel(
-    out strError);
-            if (channel == null)
-            {
-                strError = $"GetRfidChannel() error: {strError}";
-                goto ERROR1;
-            }
-#endif
+
             try
             {
                 // 注：如果 info == null，表示对每一个 List View Item 都尝试去修复一下
@@ -833,13 +1019,31 @@ this.toolStripButton_autoFixEas.Checked);
                         // TODO: 这里发现不一致的时候，是否要出现明确提示，让操作者知晓？
                         // TODO: 要迫使界面刷新，因为 EAS 值可能发生了变化
                         if (nRet == 1 && tag_info.EAS == true)
+#if OLD_CODE
                             result = SetEAS(channel, "*", "uid:" + tag_info.UID, false, out strError);
+#else
+                        {
+                            result = RfidManager.SetEAS("*", "uid:" + tag_info.UID, false);
+                            TagList.SetEasData(tag_info.UID, false);
+                        }
+#endif
                         else if (nRet == 0 && tag_info.EAS == false)
+#if OLD_CODE
                             result = SetEAS(channel, "*", "uid:" + tag_info.UID, true, out strError);
+#else
+                        {
+                            result = RfidManager.SetEAS("*", "uid:" + tag_info.UID, true);
+                            TagList.SetEasData(tag_info.UID, true);
+                        }
+#endif
                         else
+                        {
+                            this.EasFixed = true;
                             goto CONTINUE;
+                        }
 
                         uids.Add(tag_info.UID);
+
 
                         // if (tag.TagInfo == null)
                         {
@@ -872,15 +1076,14 @@ this.toolStripButton_autoFixEas.Checked);
             }
             finally
             {
-                // ReturnRfidChannel(channel);
             }
 
-            if (this._mode == "auto_fix_eas_and_close" && this.EasFixed)
+            if (StringUtil.IsInList("auto_fix_eas_and_close", this._mode)
+                && this.EasFixed)
                 this.Close();
             return;
             ERROR1:
             this.ShowMessage(strError, "red", true);
-            // MessageBox.Show(this, strError);
         }
 
         // 获得册记录的外借状态。
@@ -889,7 +1092,7 @@ this.toolStripButton_autoFixEas.Checked);
         //      -1  出错
         //      0   没有被外借
         //      1   在外借状态
-        static int GetCirculationState(string strItemXml, out string strError)
+        public static int GetCirculationState(string strItemXml, out string strError)
         {
             strError = "";
 
@@ -917,6 +1120,8 @@ this.toolStripButton_autoFixEas.Checked);
         }
 
         #region RFID Channel
+
+#if OLD_CODE
 
         ChannelPool<RfidChannel> _rfidChannels = new ChannelPool<RfidChannel>();
 
@@ -969,61 +1174,13 @@ this.toolStripButton_autoFixEas.Checked);
             _rfidChannels.ReturnChannel(channel);
         }
 
-#if REMOVED
-        public RfidChannel _rfidChannel = null;
-
-        void InitialRfidChannel()
-        {
-            if (string.IsNullOrEmpty(Program.MainForm.RfidCenterUrl) == false)
-            {
-                _rfidChannel = StartRfidChannel(
-        Program.MainForm.RfidCenterUrl,
-        out string strError);
-                if (_rfidChannel == null)
-                    this.ShowMessageBox(strError);
-#if NO
-                // 马上检测一下通道是否可用
-                try
-                {
-                    _rfidChannel.Object.ListReaders();
-                }
-                catch (Exception ex)
-                {
-                    this.ShowMessageBox("启动 RFID 设备时出错: " + ex.Message);
-                }
-#endif
-            }
-        }
-
-        void ReleaseRfidChannel()
-        {
-            if (_rfidChannel != null)
-            {
-                EndRfidChannel(_rfidChannel);
-                _rfidChannel = null;
-            }
-        }
 #endif
 
-#if REMOVED
-        void OpenRfidCapture(bool open)
-        {
-            if (_rfidChannel != null)
-            {
-                try
-                {
-                    _rfidChannel.Object.EnableSendKey(open);
-                }
-                catch
-                {
 
-                }
-            }
-        }
-#endif
 
         void OpenRfidCapture(bool open)
         {
+#if OLD_CODE
             try
             {
                 var channel = GetRfidChannel();
@@ -1044,6 +1201,9 @@ this.toolStripButton_autoFixEas.Checked);
             {
 
             }
+#else
+            RfidManager.EnableSendkey(open);
+#endif
         }
 
         #endregion
@@ -1076,6 +1236,8 @@ this.toolStripButton_autoFixEas.Checked);
 
         void timerCallback(object o)
         {
+            if (this.PauseRfid)
+                return;
             UpdateChipList(false);
         }
 
@@ -1110,7 +1272,7 @@ this.toolStripButton_autoFixEas.Checked);
                 Debug.Assert(this.listView_tags.SelectedItems.Count > 0);
                 ListViewItem selected_item = this.listView_tags.SelectedItems[0];
                 GetTagInfo(selected_item);
-                strError = "您选择的行尚未获得 TagInfo。请稍候重试";
+                strError = "您选择的行尚未获得 TagInfo。请稍后重试";
                 goto ERROR1;
             }
 
@@ -1340,6 +1502,7 @@ this.toolStripButton_autoFixEas.Checked);
 
         async Task ClearTagContent(ListViewItem item)
         {
+#if OLD_CODE
             RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
@@ -1347,6 +1510,9 @@ this.toolStripButton_autoFixEas.Checked);
                 strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
+#else
+            string strError = "";
+#endif
 
             try
             {
@@ -1366,9 +1532,16 @@ this.toolStripButton_autoFixEas.Checked);
                     new_tag_info.Bytes = bytes.ToArray();
                     new_tag_info.LockStatus = "";
                 }
+#if OLD_CODE
                 var result = channel.Object.WriteTagInfo(item_info.OneTag.ReaderName,
                     old_tag_info,
                     new_tag_info);
+#else
+                TagList.ClearTagTable(item_info.OneTag.UID);
+                var result = RfidManager.WriteTagInfo(item_info.OneTag.ReaderName,
+    old_tag_info,
+    new_tag_info);
+#endif
                 if (result.Value == -1)
                 {
                     strError = result.ErrorInfo;
@@ -1385,7 +1558,9 @@ this.toolStripButton_autoFixEas.Checked);
             }
             finally
             {
+#if OLD_CODE
                 ReturnRfidChannel(channel);
+#endif
             }
             ERROR1:
             this.Invoke((Action)(() =>
@@ -1418,9 +1593,12 @@ this.toolStripButton_autoFixEas.Checked);
         async Task<bool> SaveTagContent(ListViewItem item)
         {
             ItemInfo item_info = (ItemInfo)item.Tag;
+            if (item_info.LogicChipItem == null)
+                return false;
             if (item_info.LogicChipItem.Changed == false)
                 return false;
 
+#if OLD_CODE
             RfidChannel channel = GetRfidChannel(
     out string strError);
             if (channel == null)
@@ -1428,6 +1606,9 @@ this.toolStripButton_autoFixEas.Checked);
                 strError = $"GetRfidChannel() error: {strError}";
                 goto ERROR1;
             }
+#else
+            string strError = "";
+#endif
 
             try
             {
@@ -1435,10 +1616,16 @@ this.toolStripButton_autoFixEas.Checked);
                 var new_tag_info = BuildNewTagInfo(
     old_tag_info,
     item_info.LogicChipItem);
-
+#if OLD_CODE
                 var result = channel.Object.WriteTagInfo(item_info.OneTag.ReaderName,
                     old_tag_info,
                     new_tag_info);
+#else
+                TagList.ClearTagTable(item_info.OneTag.UID);
+                var result = RfidManager.WriteTagInfo(item_info.OneTag.ReaderName,
+                    old_tag_info,
+                    new_tag_info);
+#endif
                 if (result.Value == -1)
                 {
                     strError = result.ErrorInfo;
@@ -1457,7 +1644,9 @@ this.toolStripButton_autoFixEas.Checked);
             }
             finally
             {
+#if OLD_CODE
                 ReturnRfidChannel(channel);
+#endif
             }
             ERROR1:
             this.Invoke((Action)(() =>
@@ -1508,6 +1697,19 @@ this.toolStripButton_autoFixEas.Checked);
         private void toolStripButton_autoFixEas_CheckedChanged(object sender, EventArgs e)
         {
             StringUtil.SetInList(ref this._mode, "auto_fix_eas", this.toolStripButton_autoFixEas.Checked);
+        }
+
+        public bool PauseRfid = true;
+
+        private void RfidToolForm_Activated(object sender, EventArgs e)
+        {
+            // RfidManager.Pause = false;
+            this.PauseRfid = false;
+        }
+
+        private void RfidToolForm_Deactivate(object sender, EventArgs e)
+        {
+            this.PauseRfid = true;
         }
 
 #if NO

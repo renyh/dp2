@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 using DigitalPlatform;
 using DigitalPlatform.CommonControl;
@@ -567,14 +568,13 @@ namespace dp2Circulation
 
             if (lRet > 1)
             {
-                string strBarcode = "";
                 // return:
                 //      -1  error
                 //      0   放弃
                 //      1   成功
                 int nRet = this.Container.SelectOnePatron(lRet,
                     strRecPath,
-                    out strBarcode,
+                    out string strBarcode,
                     out strResult,
                     out strError);
                 if (nRet == -1)
@@ -675,6 +675,9 @@ namespace dp2Circulation
                 }
                 else
                     this.Container.ClearTaskList(tasks);
+
+                // 真正从 _tasks 里面删除
+                ClearTasks(tasks);  // 2019/9/3
             }
 
             this.CurrentReaderBarcode = task.ReaderBarcode; // 会自动显示出来
@@ -830,8 +833,10 @@ namespace dp2Circulation
             //    strStyle += ",testmode";
             times.Add(DateTime.Now);
 
+
+
             if (string.IsNullOrEmpty(task.ItemBarcodeEasType) == false
-                && this.Container._rfidChannel == null)
+                && string.IsNullOrEmpty(RfidManager.Url))    // this.Container._rfidChannel == null
             {
                 task.ErrorInfo = "尚未连接 RFID 设备，无法进行 RFID 标签物品的流通操作";
                 goto ERROR1;
@@ -898,7 +903,8 @@ namespace dp2Circulation
                     if (SetEAS(task, false, out strError) == false)
                     {
                         // TODO: 要 undo 刚才进行的操作
-                        lRet = -1;
+                        // lRet = -1;
+                        lRet = 1;   // 相当于黄色状态 // 红色状态，但填充 ItemSummary
                         if (string.IsNullOrEmpty(task.ErrorInfo) == false)
                             task.ErrorInfo += "; ";
                         task.ErrorInfo += strError;
@@ -985,7 +991,13 @@ end_time);
             task.ErrorInfo = "asdf a asdf asdf as df asdf as f a df asdf a sdf a sdf asd f asdf a sdf as df";
             */
 
-            if (lRet == 1)
+            if (lRet == 2)
+            {
+                // 2019/8/28
+                // 红色状态
+                task.Color = "red";
+            }
+            else if (lRet == 1)
             {
                 // 黄色状态
                 task.Color = "yellow";
@@ -1044,37 +1056,208 @@ end_time);
 
         }
 
-        bool SetEAS(ChargingTask task, bool enable, out string strError)
+        static void Sound(CancellationToken token)
+        {
+            while (token.IsCancellationRequested == false)
+            {
+                System.Console.Beep(440, 10);
+            }
+        }
+
+        static int[] tones = new int[] { 523, 659, 783 };
+        /*
+         *  C4: 261 330 392
+            C5: 523 659 783
+         * */
+        public static void Sound(int tone)
+        {
+            Task.Run(() =>
+            {
+                if (tone == -1)
+                {
+                    for (int i = 0; i < 2; i++)
+                        System.Console.Beep(1147, 1000);
+                }
+                else
+                    System.Console.Beep(tones[tone], tone == 1 ? 200 : 500);
+            });
+        }
+
+        bool PreSetEAS(ChargingTask task,
+    bool enable,
+    out bool old_state,
+    out string strError)
         {
             strError = "";
+            old_state = false;
             try
             {
-                NormalResult result = this.Container._rfidChannel.Object.SetEAS("*",
-        task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode,
-        enable);
+                NormalResult result = null;
+                string tag_name = task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode;
+                // 前置情况下，要小心检查原来标签的 EAS，如果没有必要修改就不要修改
+
+                {
+                    var get_result = this.Container.GetEAS("*", tag_name);
+                    if (get_result.Value == -1)
+                    {
+                        Sound(-1);
+
+                        strError = $"获得 RFID 标签 EAS 标志位时出错: {result.ErrorInfo}";
+                        return false;
+                    }
+
+                    old_state = (get_result.Value == 1);
+                }
+
+                // 如果修改前已经是这个值就不修改了
+                if (old_state == enable)
+                    return true;
+
+                // 修改 EAS。带有重试功能 // 2019/9/2
+                for (int i = 0; i < 2; i++)
+                {
+                    // return result.Value:
+                    //      -1  出错
+                    //      0   没有找到指定的标签
+                    //      1   找到，并成功修改 EAS
+                    result = RfidManager.SetEAS("*",
+                        tag_name,
+                        enable);
+                    if (result.Value == 1)
+                        break;
+                }
+
+                TagList.ClearTagTable("");
 
                 // testing
                 // NormalResult result = new NormalResult { Value = -1, ErrorInfo = "testing" };
 
                 if (result.Value != 1)
                 {
+                    Sound(-1);
+
+                    strError = $"前置修改 RFID 标签 EAS 标志位时出错: {result.ErrorInfo}";
+                    return false;
+                }
+
+                Sound(2);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                var text = $"前置修改 RFID 标签 EAS 标志位时出现异常: {ExceptionUtil.GetDebugText(ex)}";
+                this.Container.WriteErrorLog(text);
+                strError = $"前置修改 RFID 标签 EAS 标志位时出现异常: {ex.Message} (已写入错误日志)";
+                return false;
+            }
+        }
+
+
+        bool SetEAS(ChargingTask task,
+            bool enable,
+            // bool preprocess,
+            out string strError)
+        {
+            string prefix = "";
+            strError = "";
+            try
+            {
+                NormalResult result = null;
+                /*
+                if (preprocess == true)
+                {
+                    prefix = "前置";
+
+                    // 前置情况下，要小心检查原来标签的 EAS，如果没有必要修改就不要修改
+
+                    result = RfidManager.SetEAS("*",
+                    task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode,
+                    enable);
+                    TagList.ClearTagTable("");
+                }
+                else
+                */
+                {
+                    result = this.Container.SetEAS(
+                        task,
+                        "*",
+                        task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode,
+                        enable);
+                }
+
+                // testing
+                // NormalResult result = new NormalResult { Value = -1, ErrorInfo = "testing" };
+
+                if (result.Value != 1)
+                {
+                    Sound(-1);
+
+                    strError = $"{prefix}修改 RFID 标签 EAS 标志位时出错: {result.ErrorInfo}";
+                    return false;
+                }
+
+                Sound(2);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                strError = $"{prefix}修改 RFID 标签 EAS 标志位时出现异常: {ex.Message}";
+                return false;
+            }
+        }
+
+#if NO
+        bool SetEAS(ChargingTask task, bool enable, out string strError)
+        {
+            strError = "";
+            try
+            {
+                /*
+                NormalResult result = this.Container._rfidChannel.Object.SetEAS("*",
+        task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode,
+        enable);
+        */
+
+                NormalResult result = RfidManager.SetEAS("*",
+    task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode,
+    enable);
+                TagList.ClearTagTable("");
+
+                // testing
+                // NormalResult result = new NormalResult { Value = -1, ErrorInfo = "testing" };
+
+                if (result.Value != 1)
+                {
+                    Sound(-1);
+
                     strError = "修改 RFID 标签 EAS 标志位时出错: " + result.ErrorInfo;
 
                     bool eas_fixed = false;
                     string text = strError;
                     this.Container.Invoke((Action)(() =>
                     {
-                        using (RfidToolForm dlg = new RfidToolForm())
+                        var oldPause = this.Container.PauseRfid;
+                        this.Container.PauseRfid = true;
+                        try
                         {
-                            dlg.MessageText = text + "\r\n请利用本窗口修正 EAS";
-                            dlg.Mode = "auto_fix_eas_and_close";
-                            dlg.SelectedID = task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode;
-                            dlg.ProtocolFilter = InventoryInfo.ISO15693;
-                            dlg.ShowDialog(this.Container);
-                            eas_fixed = dlg.EasFixed;
-                            // 2019/1/23
-                            // TODO: 似乎也可以让 RfidToolForm 来负责恢复它打开前的 sendkey 状态
-                            this.Container.OpenRfidCapture(true);
+                            // TODO: 对话框打开之后，QuickCharingForm 要暂停接收标签信息
+                            using (RfidToolForm dlg = new RfidToolForm())
+                            {
+                                RfidManager.GetState("clearCache");
+                                dlg.MessageText = text + "\r\n请利用本窗口修正 EAS";
+                                dlg.Mode = "auto_fix_eas_and_close";
+                                dlg.SelectedID = task.ItemBarcodeEasType.ToLower() + ":" + task.ItemBarcode;
+                                dlg.ProtocolFilter = InventoryInfo.ISO15693;
+                                dlg.ShowDialog(this.Container);
+                                eas_fixed = dlg.EasFixed;
+                                // 2019/1/23
+                                // TODO: 似乎也可以让 RfidToolForm 来负责恢复它打开前的 sendkey 状态
+                                // this.Container.OpenRfidCapture(true);
+                            }
+                        }
+                        finally
+                        {
+                            this.Container.PauseRfid = oldPause;
                         }
                     }));
 
@@ -1083,6 +1266,8 @@ end_time);
 
                     return false;
                 }
+
+                Sound(2);
                 return true;
             }
             catch (Exception ex)
@@ -1091,6 +1276,8 @@ end_time);
                 return false;
             }
         }
+
+#endif
 
         // parameters:
         //      times   时间值数组。依次是 总开始时间, API 开始时间, API 结束时间, 总结束时间
@@ -1278,10 +1465,28 @@ end_time);
             times.Add(DateTime.Now);
 
             if (string.IsNullOrEmpty(task.ItemBarcodeEasType) == false
-    && this.Container._rfidChannel == null)
+    && string.IsNullOrEmpty(RfidManager.Url)) // this.Container._rfidChannel == null
             {
                 task.ErrorInfo = "尚未连接 RFID 设备，无法进行 RFID 标签物品的流通操作";
                 goto ERROR1;
+            }
+
+            // 还书操作在调用 Return() API 之前预先修改一次 EAS 为 On
+            bool eas_changed = false;
+            {
+                // 修改 EAS
+                if (string.IsNullOrEmpty(task.ItemBarcodeEasType) == false)
+                {
+                    if (PreSetEAS(task, true, out bool old_eas, out strError) == false)
+                    {
+                        // task.ErrorInfo = $"{strError}\r\n还书操作没有执行，EAS 不需要修正";
+                        task.ErrorInfo = $"{strError}\r\n还书操作失败";   // EAS 不需要额外修正
+                        goto ERROR1;
+                    }
+
+                    if (old_eas == false)
+                        eas_changed = true;
+                }
             }
 
             long lRet = 0;
@@ -1336,18 +1541,28 @@ end_time);
             if (lRet != 0)
                 task.ErrorInfo = strError;
 
-            if (lRet != -1)
+
+            if (eas_changed == true && lRet == -1)
             {
-                // 修改 EAS
-                if (string.IsNullOrEmpty(task.ItemBarcodeEasType) == false)
+                if (channel.ErrorCode == ErrorCode.NotBorrowed)
                 {
-                    if (SetEAS(task, true, out strError) == false)
+                    Debug.Assert(eas_changed == true, "");
+                    // 此时正好顺便修正了以前此册的 EAS 问题，所以也不需要回滚了
+                    // TODO: 是否需要提示一下操作者？
+                    if (string.IsNullOrEmpty(task.ErrorInfo) == false)
+                        task.ErrorInfo += "; ";
+                    task.ErrorInfo += $"(前置 EAS 修改顺便把以前遗留的 Off 状态修正为 On)";
+                }
+                else
+                {
+                    // Undo 早先的 EAS 修改
+                    if (SetEAS(task, false, out strError) == false)
                     {
-                        // TODO: 要 undo 刚才进行的操作
-                        lRet = -1;
+                        // lRet = -1;
+                        lRet = 1;
                         if (string.IsNullOrEmpty(task.ErrorInfo) == false)
                             task.ErrorInfo += "; ";
-                        task.ErrorInfo += strError;
+                        task.ErrorInfo += $"回滚 EAS 阶段: {strError}";
                     }
                 }
             }
@@ -1473,7 +1688,13 @@ end_time);
                 start_time,
                 end_time);
 
-            if (lRet == 1)
+            if (lRet == 2)
+            {
+                // 2019/8/28
+                // 红色状态
+                task.Color = "red";
+            }
+            else if (lRet == 1)
             {
                 // 黄色状态
                 task.Color = "yellow";
@@ -1569,6 +1790,48 @@ end_time);
             finally
             {
                 this.m_lock.ExitWriteLock();
+            }
+        }
+
+        public int Count
+        {
+            get
+            {
+                if (this.m_lock.TryEnterReadLock(m_nLockTimeout) == false)
+                    throw new LockException("锁定尝试中超时");
+                try
+                {
+                    return _tasks.Count;
+                }
+                finally
+                {
+                    this.m_lock.ExitReadLock();
+                }
+            }
+        }
+
+        public ChargingTask FindTaskByItemBarcode(string itemBarcode)
+        {
+            if (this.m_lock.TryEnterReadLock(m_nLockTimeout) == false)   // m_nLockTimeout
+                throw new LockException("锁定尝试中超时");
+            try
+            {
+                for (int i = _tasks.Count - 1; i >= 0; i--)
+                {
+                    var task = _tasks[i];
+
+                    if (task.Action == "load_reader_info")
+                        continue;
+
+                    if (itemBarcode == task.ItemBarcode)
+                        return task;
+                }
+
+                return null;
+            }
+            finally
+            {
+                this.m_lock.ExitReadLock();
             }
         }
 

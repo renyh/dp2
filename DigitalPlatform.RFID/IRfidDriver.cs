@@ -35,6 +35,12 @@ uint new_password);
         //void ConnectTag();
 
         //void DisconnectTag();
+
+        GetLockStateResult GetShelfLockState(string lockName,
+    int index);
+
+        NormalResult OpenShelfLock(string lockName,
+    int index);
     }
 
     // 一段连续的 block
@@ -293,7 +299,7 @@ uint new_password);
         // [out]
         public List<HintInfo> HintTable { get; set; }
 
-        public InitializeDriverResult(NormalResult result) : base (result)
+        public InitializeDriverResult(NormalResult result) : base(result)
         {
 
         }
@@ -341,6 +347,54 @@ uint new_password);
             if (Array.IndexOf(names, one) != -1)
                 return true;
             return false;
+        }
+    }
+
+    public class ShelfLock
+    {
+        public string Name { get; set; }
+        public string Type { get; set; }    // 类型 USB/COM
+        public string DriverName { get; set; }  // 驱动名称
+        public string ProductName { get; set; } // 产品型号
+        public string Protocols { get; set; }   // 支持的协议
+        public string SerialNumber { get; set; }    // 序列号(USB)，或者 COM 端口号
+        public string DriverPath { get; set; }
+        public UIntPtr LockHandle { get; set; }
+
+    }
+
+    public class LockState
+    {
+        public string Name { get; set; }
+        public string State { get; set; }
+
+        public override string ToString()
+        {
+            return $"Name={Name},State={State}";
+        }
+    }
+
+    public class GetLockStateResult : NormalResult
+    {
+        public List<LockState> States { get; set; }
+
+        public override string ToString()
+        {
+            StringBuilder text = new StringBuilder();
+            text.Append(base.ToString() + "\r\n");
+            if (this.States == null)
+                text.Append("States=null\r\n");
+            else
+            {
+                int i = 0;
+                text.Append($"States.Count={States.Count}\r\n");
+                foreach (var state in this.States)
+                {
+                    text.Append($"{i + 1}) {state.ToString()}");
+                    i++;
+                }
+            }
+            return text.ToString();
         }
     }
 }

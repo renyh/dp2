@@ -43,8 +43,10 @@ namespace RfidCenter
 
             InitializeComponent();
 
+            /*
             this.tabControl_main.TabPages.Remove(this.tabPage_cfg);
             this.tabPage_cfg.Dispose();
+            */
 
             {
                 _floatingMessage = new FloatingMessageForm(this);
@@ -64,11 +66,13 @@ namespace RfidCenter
 
                 BeginRefreshReaders(type, new CancellationToken());
             },
-            new CancellationToken());
+            _cancel.Token);
 
             // UsbNotification.RegisterUsbDeviceNotification(this.Handle);
             SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
         }
+
+        CancellationTokenSource _cancel = new CancellationTokenSource();
 
         private void SystemEvents_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
@@ -77,9 +81,16 @@ namespace RfidCenter
                 case PowerModes.Resume:
                     Task.Run(() =>
                     {
-                        Task.Delay(TimeSpan.FromSeconds(5)).Wait();
-                        this.Speak("RFID 中心被唤醒");
-                        BeginRefreshReaders("connected", new CancellationToken());
+                        try
+                        {
+                            Task.Delay(TimeSpan.FromSeconds(5)).Wait();
+                            this.Speak("RFID 中心被唤醒");
+                            BeginRefreshReaders("connected", new CancellationToken());
+                        }
+                        catch
+                        {
+
+                        }
                     });
                     break;
                 case PowerModes.Suspend:
@@ -109,7 +120,7 @@ namespace RfidCenter
 
             SetErrorState("retry", "正在启动");
 
-            if (DetectVirus.Detect360() || DetectVirus.DetectGuanjia())
+            if (DetectVirus.DetectXXX() || DetectVirus.DetectGuanjia())
             {
                 MessageBox.Show(this, "rfidcenter 被木马软件干扰，无法启动");
                 Application.Exit();
@@ -127,6 +138,11 @@ namespace RfidCenter
                     */
             }
             ClearHtml();
+
+            //this.Invoke((Action)(() =>
+            //{
+            this.UiState = ClientInfo.Config.Get("global", "ui_state", ""); // Properties.Settings.Default.ui_state;
+            //}));
 
             // 显示版本号
             this.OutputHistory($"版本号: {ClientInfo.ClientVersion}");
@@ -203,14 +219,12 @@ namespace RfidCenter
 
             // TODO: 每隔一段时间自动保存一次配置
             SaveSettings();
+            _cancel.Cancel();
         }
 
         void SaveSettings()
         {
-            if (this.checkBox_cfg_savePasswordLong.Checked == false)
-                this.textBox_cfg_password.Text = "";
             ClientInfo.Config?.Set("global", "ui_state", this.UiState);
-            ClientInfo.Config?.Set("global", "replication_start", this.textBox_replicationStart.Text);
             ClientInfo.Finish();
         }
 
@@ -221,7 +235,7 @@ namespace RfidCenter
             SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
             // UsbNotification.UnregisterUsbDeviceNotification();
 
-            _cancelInventory?.Cancel();
+            // _cancelInventory?.Cancel();
 
             // 
 
@@ -350,6 +364,7 @@ namespace RfidCenter
                 bool success = false;
                 try
                 {
+
                     ClearMessage();
                     this.SetErrorState("retry", "正在初始化 RFID 设备");
                     if (message != null)
@@ -359,7 +374,18 @@ namespace RfidCenter
 
                     _driver.ReleaseDriver();
                     var existing_hint_table = GetHintTable();
-                    InitializeDriverResult result = _driver.InitializeDriver("", set_hint_table ? null : existing_hint_table);
+
+                    // TODO: 要允许 COM1,COM2 这种形态的内容被输入 combobox 和保存
+                    string lock_param = GetLockParam().Replace(",", "|").ToUpper();
+                    if (string.IsNullOrEmpty(lock_param) == false
+                        && lock_param != "<不使用>")
+                    {
+                        if (lock_param == "<自动>")
+                            lock_param = "";
+                        lock_param = $"lock:{lock_param}";
+                    }
+
+                    InitializeDriverResult result = _driver.InitializeDriver(lock_param, set_hint_table ? null : existing_hint_table);
                     // 列出所有可用设备名称
                     UpdateDeviceList(result.Readers);
 
@@ -391,15 +417,12 @@ namespace RfidCenter
                         }
                     }
 
-                    this.Invoke((Action)(() =>
-                    {
-                        this.UiState = ClientInfo.Config.Get("global", "ui_state", ""); // Properties.Settings.Default.ui_state;
-                    }));
                 }
                 catch (Exception ex)
                 {
                     SetErrorState("error", ex.Message);
-                    ShowMessageBox(ex.Message);
+                    OutputHistory($"初始化驱动出现异常: {ex.Message}", 2);
+                    ShowMessage(ex.Message, "red", true);
                 }
                 finally
                 {
@@ -436,6 +459,14 @@ namespace RfidCenter
         {
             //NormalResult result = _driver.CloseReader();
             //MessageBox.Show(this, result.ToString());
+        }
+
+        string GetLockParam()
+        {
+            return (string)this.Invoke((Func<string>)(() =>
+            {
+                return this.comboBox_lock.Text;
+            }));
         }
 
         string GetCurrentReaderName()
@@ -564,9 +595,10 @@ c0 9e ba a0
 
         private void toolStripButton_autoInventory_CheckStateChanged(object sender, EventArgs e)
         {
-            StartInventory(toolStripButton_autoInventory.Checked);
+            // StartInventory(toolStripButton_autoInventory.Checked);
         }
 
+#if NO
         // 启动或者停止自动盘点
         void StartInventory(bool start)
         {
@@ -628,6 +660,7 @@ c0 9e ba a0
 
             }
         }
+#endif
 
         ListViewItem FindItem(string uid)
         {
@@ -641,6 +674,7 @@ c0 9e ba a0
             return null;
         }
 
+#if NO
         void FillIventoryInfo(List<InventoryInfo> infos)
         {
             foreach (InventoryInfo info in infos)
@@ -657,6 +691,8 @@ c0 9e ba a0
                 }
             }
         }
+
+#endif
 
         static void SetItemColor(ListViewItem item, string state)
         {
@@ -1053,15 +1089,10 @@ bool bClickClose = false)
                 List<object> controls = new List<object>
                 {
                     this.tabControl_main,
-                    this.textBox_cfg_dp2LibraryServerUrl,
-                    this.textBox_cfg_userName,
-                    this.textBox_cfg_password,
-                    this.textBox_cfg_location,
                     new ControlWrapper(this.checkBox_speak, true),
                     new ControlWrapper(this.checkBox_beep, true),
-                    new ControlWrapper(this.checkBox_cfg_savePasswordLong, true),
                     this.comboBox_deviceList,
-                    this.textBox_cfg_shreshold
+                    new ComboBoxText(this.comboBox_lock)
                 };
                 return GuiState.GetUiState(controls);
             }
@@ -1070,21 +1101,16 @@ bool bClickClose = false)
                 List<object> controls = new List<object>
                 {
                     this.tabControl_main,
-                    this.textBox_cfg_dp2LibraryServerUrl,
-                    this.textBox_cfg_userName,
-                    this.textBox_cfg_password,
-                    this.textBox_cfg_location,
                     new ControlWrapper(this.checkBox_speak, true),
                     new ControlWrapper(this.checkBox_beep, true),
-                    new ControlWrapper(this.checkBox_cfg_savePasswordLong, true),
                     this.comboBox_deviceList,
-                    this.textBox_cfg_shreshold
+                    new ComboBoxText(this.comboBox_lock)
                 };
                 GuiState.SetUiState(controls, value);
             }
         }
 
-        #region remoting server
+#region remoting server
 
 #if HTTP_CHANNEL
         HttpChannel m_serverChannel = null;
@@ -1132,9 +1158,9 @@ bool bClickClose = false)
             }
         }
 
-        #endregion
+#endregion
 
-        #region ipc channel
+#region ipc channel
 
         public static bool CallActivate(string strUrl)
         {
@@ -1208,7 +1234,7 @@ bool bClickClose = false)
             }
         }
 
-        #endregion
+#endregion
 
         private void ToolStripMenuItem_testRfidChannel_Click(object sender, EventArgs e)
         {
@@ -1216,7 +1242,7 @@ bool bClickClose = false)
             MessageBox.Show(this, result.ToString());
         }
 
-        #region 浏览器控件
+#region 浏览器控件
 
         public void ClearHtml()
         {
@@ -1369,7 +1395,7 @@ string strHtml)
             AppendHtml("<div class='debug " + strClass + "'>" + HttpUtility.HtmlEncode(strText).Replace("\r\n", "<br/>") + "</div>");
         }
 
-        #endregion
+#endregion
 
         private void MenuItem_openSendKey_Click(object sender, EventArgs e)
         {
@@ -1437,22 +1463,29 @@ string strHtml)
             // _refreshCount = 2;
             _refreshTask = Task.Run(() =>
             {
-                while (_refreshCount-- >= 0)
+                try
                 {
-                    Task.Delay(TimeSpan.FromSeconds(_delaySeconds)).Wait(token);
-                    if (token.IsCancellationRequested)
-                        break;
-                    // 迫使重新启动
-                    InitializeDriver();
-                    if (token.IsCancellationRequested)
-                        break;
+                    while (_refreshCount-- >= 0)
+                    {
+                        Task.Delay(TimeSpan.FromSeconds(_delaySeconds)).Wait(token);
+                        if (token.IsCancellationRequested)
+                            break;
+                        // 迫使重新启动
+                        InitializeDriver();
+                        if (token.IsCancellationRequested)
+                            break;
 
-                    // 如果初始化没有成功，则要追加初始化
-                    if (this.ErrorState == "normal")
-                        break;
+                        // 如果初始化没有成功，则要追加初始化
+                        if (this.ErrorState == "normal")
+                            break;
+                    }
+                    _refreshTask = null;
+                    _refreshCount = 0;
                 }
-                _refreshTask = null;
-                _refreshCount = 0;
+                catch
+                {
+                    
+                }
             });
         }
 
@@ -1843,6 +1876,40 @@ rfidcenter 版本: RfidCenter, Version=1.1.7013.32233, Culture=neutral, PublicKe
         private void ToolStripMenuItem_deleteShortcut_Click(object sender, EventArgs e)
         {
             ClientInfo.RemoveShortcutFromStartupGroup("dp2-RFID中心", true);
+        }
+
+        private void MenuItem_openLock_Click(object sender, EventArgs e)
+        {
+            string strIndex = InputDlg.GetInput(this, "请指定锁编号", "锁编号(从0开始)", "0");
+            if (string.IsNullOrEmpty(strIndex) == false)
+            {
+                var result = _driver.OpenShelfLock("*", Convert.ToInt32(strIndex));
+                MessageDlg.Show(this, result.ToString(), "开锁");
+            }
+            else
+            {
+                MessageBox.Show(this, "放弃");
+            }
+        }
+
+        private void MenuItem_getLockState_Click(object sender, EventArgs e)
+        {
+            string strIndex = InputDlg.GetInput(this, "请指定锁编号", "锁编号(从0开始)", "0");
+            if (string.IsNullOrEmpty(strIndex) == false)
+            {
+                var result = _driver.GetShelfLockState("*", Convert.ToInt32(strIndex));
+                MessageDlg.Show(this, result.ToString(), "锁状态");
+            }
+            else
+            {
+                MessageBox.Show(this, "放弃");
+            }
+        }
+
+        private void MenuItem_getComPortInfo_Click(object sender, EventArgs e)
+        {
+            var results = UsbInfo.GetSerialDevices();
+            MessageDlg.Show(this, UsbInfo.ToString(results), "COM 口信息");
         }
     }
 }

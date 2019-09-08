@@ -9,7 +9,9 @@ using System.Threading.Tasks;
 using DigitalPlatform;
 using DigitalPlatform.Core;
 using DigitalPlatform.Interfaces;
+using DigitalPlatform.IO;
 using DigitalPlatform.LibraryClient;
+using DigitalPlatform.RFID;
 
 namespace dp2SSL
 {
@@ -84,9 +86,10 @@ namespace dp2SSL
                     // 状态转向 ok，需要补充触发一次
                     if (_state != "ok")
                     {
-                        Touched(result, new TouchedEventArgs
+                        Touched?.Invoke(result, new TouchedEventArgs
                         {
                             Message = result.Message,
+                            Quality = result.Quality,
                             ErrorOccur = result.Value == -1,
                             Result = result
                         });
@@ -102,9 +105,12 @@ namespace dp2SSL
                     else
                         _state = "ok";
 
-                    Touched(result, new TouchedEventArgs
+                    // 注： result.Value == -1 的时候，SetError 也触发了，Touched 也触发了。
+                    // 如果应用已经挂接了 SetError 事件，建议 Touched 里面可以忽略 result.Value == -1 的情况
+                    Touched?.Invoke(result, new TouchedEventArgs
                     {
                         Message = result.Message,
+                        Quality = result.Quality,
                         ErrorOccur = result.Value == -1,
                         Result = result
                     });
@@ -262,19 +268,11 @@ TouchedEventArgs e);
     public class TouchedEventArgs : EventArgs
     {
         public string Message { get; set; }
+        public int Quality { get; set; } // 2019/9/4 指纹图象质量，100 为满分
         public bool ErrorOccur { get; set; }
 
         public GetMessageResult Result { get; set; }
     }
 
-    public delegate void SetErrorEventHandler(object sender,
-SetErrorEventArgs e);
 
-    /// <summary>
-    /// 设置出错信息事件的参数
-    /// </summary>
-    public class SetErrorEventArgs : EventArgs
-    {
-        public string Error { get; set; }
-    }
 }

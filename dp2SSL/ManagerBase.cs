@@ -11,9 +11,11 @@ using System.Threading.Tasks;
 using DigitalPlatform;
 using DigitalPlatform.Core;
 using DigitalPlatform.LibraryClient;
+using DigitalPlatform.RFID;
 
 namespace dp2SSL
 {
+#if REMOVED
     // 一些公共的成员
     // T: IFingerprint 或 IRfid
     public class ManagerBase<T>
@@ -67,7 +69,7 @@ namespace dp2SSL
                 this.Lock.ExitWriteLock();
             }
 
-            LibraryChannelManager.Log.Debug($"{this.Name} channels Clear() completed. IdleCount={this.Channels.IdleCount}, UsedCount={this.Channels.UsedCount}");
+            LibraryChannelManager.Log?.Debug($"{this.Name} channels Clear() completed. IdleCount={this.Channels.IdleCount}, UsedCount={this.Channels.UsedCount}");
         }
 
         void _clear()
@@ -198,7 +200,7 @@ namespace dp2SSL
 
             return this.Channels.GetChannel(() =>
             {
-                LibraryChannelManager.Log.Debug($"beginof new {this.Name} channel, Url={this.Url}");
+                LibraryChannelManager.Log?.Debug($"beginof new {this.Name} channel, Url={this.Url}");
                 var channel = StartChannel(
     this.Url,
     out string strError);
@@ -223,7 +225,7 @@ namespace dp2SSL
                     else
                         throw new Exception($"启动 {this.Name} 通道时出错(2): {ex.Message}", ex);
                 }
-                LibraryChannelManager.Log.Debug($"endof new {this.Name} channel, Url={this.Url}");
+                LibraryChannelManager.Log?.Debug($"endof new {this.Name} channel, Url={this.Url}");
                 return channel;
             });
         }
@@ -298,6 +300,7 @@ namespace dp2SSL
 
     }
 
+#if REMOVED
     public class BaseChannel<T>
     {
         public IpcClientChannel Channel { get; set; }
@@ -305,6 +308,7 @@ namespace dp2SSL
         // 通道已经成功启动。意思是已经至少经过一个 API 调用并表现正常
         public bool Started { get; set; }
     }
+#endif
 
     // 验证异常
     public class UrlEmptyException : Exception
@@ -360,4 +364,6 @@ namespace dp2SSL
         }
     }
 
+
+#endif
 }

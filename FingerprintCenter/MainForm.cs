@@ -177,7 +177,7 @@ bool bClickClose = false)
 
             ClientInfo.SetErrorState("retry", "正在启动");
 
-            if (DetectVirus.Detect360() || DetectVirus.DetectGuanjia())
+            if (DetectVirus.DetectXXX() || DetectVirus.DetectGuanjia())
             {
                 MessageBox.Show(this, "fingerprintcenter 被木马软件干扰，无法启动");
                 Application.Exit();
@@ -339,6 +339,7 @@ bool bClickClose = false)
                 DisplayText("正在初始化指纹环境 ...");
                 DisplayText("正在打开指纹设备 ...");
 
+                try
                 {
                     FingerPrint.Free();
                     NormalResult result = FingerPrint.Init(CurrentDeviceIndex);
@@ -347,6 +348,14 @@ bool bClickClose = false)
                         ClientInfo.SetErrorState("error", result.ErrorInfo);
                         return result;
                     }
+                }
+                catch (Exception ex)
+                {
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorInfo = $"StartFingerPrint() 出现异常: {ex.Message}"
+                    };
                 }
 
                 UpdateDeviceList();
@@ -458,11 +467,19 @@ bool bClickClose = false)
         void StartTimer()
         {
             if (_timer == null)
+            {
+                TimeSpan period = TimeSpan.FromMinutes(5);  // 5 分钟
+
+                if (string.IsNullOrEmpty(this.ServerVersion) == false
+                    && StringUtil.CompareVersion(this.ServerVersion, "3.17") >= 0)
+                    period = TimeSpan.FromSeconds(30);
+
                 _timer = new System.Threading.Timer(
-                    new System.Threading.TimerCallback(timerCallback),
-                    null,
-                    TimeSpan.FromSeconds(30),
-                    TimeSpan.FromMinutes(5));   // 5 分钟
+                new System.Threading.TimerCallback(timerCallback),
+                null,
+                TimeSpan.FromSeconds(30),
+                period);
+            }
         }
 
         void EndTimer()
@@ -480,11 +497,15 @@ bool bClickClose = false)
             {
                 this.pictureBox_fingerprint.Image = e.Image;
             }));
+
+            OutputHistory($"quality={e.Quality}");
         }
 
         private void FingerPrint_Speak(object sender, SpeakEventArgs e)
         {
             Speak(e.Text);
+            if (string.IsNullOrEmpty(e.DisplayText) == false)
+                this.DisplayText(e.DisplayText, "white", "gray");
         }
 
         static void Beep()
@@ -515,11 +536,14 @@ bool bClickClose = false)
                 {
                     Beep();
                     Speak("无法识别");
-                    DisplayText(e.ErrorInfo, "white", "darkred");
+                    DisplayText($"{e.ErrorInfo}\r\n图象质量: {e.Quality}", "white", "darkred");
                 }
                 else
                 {
                     Speak("很好");
+
+                    DisplayText($"很好\r\n图像质量: {e.Quality}");
+
                     // TODO: 显示文字中包含 e.Text?
 
                     if (this.SendKeyEnabled)
@@ -698,6 +722,7 @@ bool bClickClose = false)
         string _currentUserName = "";
 
         public string ServerUID = "";
+        public string ServerVersion = "";
 
         internal void Channel_AfterLogin(object sender, AfterLoginEventArgs e)
         {
@@ -886,6 +911,7 @@ out strError);
                     };
                 }
 
+                this.ServerVersion = strVersion;
                 this.ServerUID = strUID;
 
                 /*
@@ -1005,7 +1031,7 @@ MessageBoxDefaultButton.Button2);
             _cancel.Cancel();
         }
 
-#region ipc channel
+        #region ipc channel
 
         public static bool CallActivate(string strUrl)
         {
@@ -1080,7 +1106,7 @@ MessageBoxDefaultButton.Button2);
             }
         }
 
-#endregion
+        #endregion
 
         delegate void _ActivateWindow(bool bActive);
 
@@ -1143,7 +1169,7 @@ MessageBoxDefaultButton.Button2);
             FingerPrint.CancelRegisterString();
         }
 
-#region 浏览器控件
+        #region 浏览器控件
 
         public void ClearHtml()
         {
@@ -1297,7 +1323,7 @@ string strHtml)
             AppendHtml("<div class='debug " + strClass + "'>" + HttpUtility.HtmlEncode(strText).Replace("\r\n", "<br/>") + "</div>");
         }
 
-#endregion
+        #endregion
 
         void DisplayText(string text,
             string textColor = "white",
@@ -1339,6 +1365,8 @@ string strHtml)
                 }
             }
 
+            // AbortAllChannel();
+
             SaveSettings();
         }
 
@@ -1358,7 +1386,7 @@ Keys keyData)
         }
 
 #if NO
-#region device changed
+        #region device changed
 
         const int WM_DEVICECHANGE = 0x0219; //see msdn site
         const int DBT_DEVNODES_CHANGED = 0x0007;
@@ -1390,7 +1418,7 @@ Keys keyData)
             base.WndProc(ref m);
         }
 
-#endregion
+        #endregion
 #endif
 
         public void ActivateWindow()
@@ -1703,8 +1731,8 @@ Keys keyData)
             _eventReplicationFinish.Reset();
 
             this.OutputHistory($"增量同步指纹信息 {strStartDate}");
-            this.ShowMessage($"正在同步最新指纹信息 {strStartDate} ...");
-            EnableControls(false);
+            //this.ShowMessage($"正在同步最新指纹信息 {strStartDate} ...");
+            //EnableControls(false);
             LibraryChannel channel = this.GetChannel();
             TimeSpan old_timeout = channel.Timeout;
             channel.Timeout = TimeSpan.FromSeconds(30);
@@ -1717,12 +1745,13 @@ channel,
 strStartDate,
 strEndDate,
 LogType.OperLog,
+this.ServerVersion,
 token);
                 if (result.Value == -1)
                 {
                     strError = $"增量同步指纹信息 {strStartDate} 失败: {result.ErrorInfo}";
                     this.OutputHistory(strError, 2);
-                    this.ShowMessage(strError, "red", true);
+                    //this.ShowMessage(strError, "red", true);
                     this.Speak(strError);
                     return;
                 }
@@ -1733,16 +1762,16 @@ token);
                 if (result.Value == 1)
                     this.Invoke((Action)(() =>
                     {
-                        this.textBox_replicationStart.Text = result.LastDate + ":" + result.LastIndex;
+                        this.textBox_replicationStart.Text = result.LastDate + ":" + result.LastIndex + "-";    // 注意 - 符号不能少。少了意思就会变成每次只获取一条日志记录了
                     }));
             }
             finally
             {
                 channel.Timeout = old_timeout;
                 this.ReturnChannel(channel);
-                EnableControls(true);
-                if (done == true)
-                    this.ClearMessage();
+                //EnableControls(true);
+                //if (done == true)
+                //    this.ClearMessage();
 
                 _eventReplicationFinish.Set();
                 _cancelReplication = null;

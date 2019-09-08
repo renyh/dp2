@@ -32,7 +32,7 @@ namespace dp2SSL
     /// 借书功能页面
     /// PageBorrow.xaml 的交互逻辑
     /// </summary>
-    public partial class PageBorrow : Page, INotifyPropertyChanged
+    public partial class PageBorrow : Page, INotifyPropertyChanged, IDisposable
     {
         LayoutAdorner _adorner = null;
         AdornerLayer _layer = null;
@@ -42,19 +42,12 @@ namespace dp2SSL
         EntityCollection _entities = new EntityCollection();
         Patron _patron = new Patron();
 
-        // Task _checkTask = null;
-        CancellationTokenSource _cancel = new CancellationTokenSource();
+        // CancellationTokenSource _cancel = new CancellationTokenSource();
 
         public PageBorrow()
         {
             InitializeComponent();
 
-            /*
-            _globalErrorTable = new ErrorTable((e) =>
-            {
-                this.Error = e;
-            });
-            */
             _patronErrorTable = new ErrorTable((e) =>
             {
                 _patron.Error = e;
@@ -76,6 +69,8 @@ namespace dp2SSL
             // _patron.IsFingerprintSource = true;
 
             App.CurrentApp.PropertyChanged += CurrentApp_PropertyChanged;
+
+
         }
 
         private void CurrentApp_PropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -137,6 +132,7 @@ namespace dp2SSL
                 Message = result.Patron,
             };
             SetPatronInfo(message);
+            SetQuality("");
             await FillPatronDetail();
         }
 
@@ -206,14 +202,7 @@ namespace dp2SSL
             FingerprintManager.SetError += FingerprintManager_SetError;
             FingerprintManager.Touched += FingerprintManager_Touched;
 
-#if OLD_RFID
-            RfidManager.SetError += RfidManager_SetError;
-            RfidManager.ListTags += RfidManager_ListTags;
-#endif
-            App.CurrentApp.TagChanged += CurrentApp_TagChanged;
-            // App.CurrentApp.TagSetError += CurrentApp_TagSetError;
-
-            RfidManager.GetState("clearCache");
+            RfidManager.ClearCache();
             // 处理以前积累的 tags
             // RfidManager.TriggerLastListTags();
 
@@ -236,9 +225,19 @@ namespace dp2SSL
                 this.patronControl.SetStartMessage(StringUtil.MakePathList(style));
             }
 
-            await InitialEntities();
 
             // SetGlobalError("test", "test error");
+
+            ////
+            App.CurrentApp.TagChanged += CurrentApp_TagChanged;
+            while (true)
+            {
+                _tagChangedCount = 0;
+                await InitialEntities();
+                if (_tagChangedCount == 0)
+                    break;  // 只有当初始化过程中没有被 TagChanged 事件打扰过，才算初始化成功了。否则就要重新初始化
+            }
+
         }
 
         /*
@@ -248,8 +247,17 @@ namespace dp2SSL
         }
         */
 
+        class TagChangedMessage
+        {
+            public object sender { get; set; }
+            public TagChangedEventArgs e { get; set; }
+        }
+
+        int _tagChangedCount = 0;
+
         private async void CurrentApp_TagChanged(object sender, TagChangedEventArgs e)
         {
+            _tagChangedCount++;
             await ChangeEntities((BaseChannel<IRfid>)sender, e);
         }
 
@@ -326,6 +334,8 @@ namespace dp2SSL
         // 首次初始化 Entity 列表
         async Task<NormalResult> InitialEntities()
         {
+            _entities.Clear();  // 2019/9/4
+
             var books = TagList.Books;
             if (books.Count > 0)
             {
@@ -364,8 +374,13 @@ namespace dp2SSL
                     CheckEAS(update_entities);
                 }
             }
+            else
+            {
+                booksControl.SetBorrowable();
+            }
 
             var task = RefreshPatrons();
+
             return new NormalResult();
         }
 
@@ -388,7 +403,7 @@ namespace dp2SSL
             }));
         }
 
-        ReaderWriterLockSlim _lock_refreshPatrons = new ReaderWriterLockSlim();
+        // ReaderWriterLockSlim _lock_refreshPatrons = new ReaderWriterLockSlim();
 
         async Task RefreshPatrons()
         {
@@ -405,10 +420,13 @@ namespace dp2SSL
                 }
                 else
                 {
+                    SetQuality("");
                     // RFID 来源
                     if (patrons.Count == 1)
                     {
-                        _patron.Fill(patrons[0].OneTag);
+                        if (_patron.Fill(patrons[0].OneTag) == false)
+                            return;
+
                         SetPatronError("rfid_multi", "");   // 2019/5/22
 
                         // 2019/5/29
@@ -428,12 +446,17 @@ namespace dp2SSL
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                SetGlobalError("rfid", $"RefreshPatrons() 出现异常: {ex.Message}");
+            }
             finally
             {
                 //_lock_refreshPatrons.ExitWriteLock();
             }
         }
 
+#if OLD_CODE
         private async void RfidManager_SetError(object sender, SetErrorEventArgs e)
         {
             SetGlobalError("rfid", e.Error);
@@ -457,6 +480,7 @@ namespace dp2SSL
                 _rfidState = "error";
             }
         }
+#endif
 
 #if OLD_RFID
         private async void RfidManager_ListTags(object sender, ListTagsEventArgs e)
@@ -472,10 +496,24 @@ namespace dp2SSL
             SetGlobalError("fingerprint", e.Error);
         }
 
+        void SetQuality(string text)
+        {
+            Application.Current.Dispatcher.Invoke(new Action(() =>
+            {
+                this.Quality.Text = text;
+            }));
+        }
+
         // 从指纹阅读器获取消息(第一阶段)
         private async void FingerprintManager_Touched(object sender, TouchedEventArgs e)
         {
+            // 注如果 FingerprintManager 已经挂接 SetError 事件，Touched 事件这里就可以忽略 result.Value == -1 情况
+            if (e.Result.Value == -1)
+                return;
+
             SetPatronInfo(e.Result);
+
+            SetQuality(e.Quality == 0 ? "" : e.Quality.ToString());
 
             await FillPatronDetail();
 
@@ -618,40 +656,28 @@ namespace dp2SSL
 
         private void PageBorrow_Unloaded(object sender, RoutedEventArgs e)
         {
-            _cancel.Cancel();
-#if NO
-            if (_fingerprintChannel != null)
-            {
-                FingerPrint.EndFingerprintChannel(_fingerprintChannel);
-                _fingerprintChannel = null;
-            }
-#endif
+            // _cancel.Cancel();
 
-#if NO
-            if (_rfidChannel != null)
-            {
-                RFID.EndRfidChannel(_rfidChannel);
-                _rfidChannel = null;
-            }
-#endif
-
-            /*
-            if (_timer != null)
-                _timer.Dispose();
-                */
-
-            RfidManager.SetError -= RfidManager_SetError;
-#if OLD_RFID
-            RfidManager.ListTags -= RfidManager_ListTags;
-#endif
+            // 释放 Loaded 里面分配的资源
+            // RfidManager.SetError -= RfidManager_SetError;
             App.CurrentApp.TagChanged -= CurrentApp_TagChanged;
-            // App.CurrentApp.TagSetError -= CurrentApp_TagSetError;
 
             FingerprintManager.Touched -= FingerprintManager_Touched;
             FingerprintManager.SetError -= FingerprintManager_SetError;
 
+            /*
+            // 释放构造函数里面分配的资源
+            //Loaded -= PageBorrow_Loaded;
+            //Unloaded -= PageBorrow_Unloaded;
+            this.patronControl.InputFace -= PatronControl_InputFace;
+            this._patron.PropertyChanged -= _patron_PropertyChanged;
+            App.CurrentApp.PropertyChanged -= CurrentApp_PropertyChanged;
+            */
+
             // 确保 page 关闭时对话框能自动关闭
             CloseDialogs();
+
+            PatronClear();  // 2019/9/3
         }
 
         bool _visiblityChanged = false;
@@ -662,7 +688,14 @@ namespace dp2SSL
             {
                 Task.Run(() =>
                 {
-                    LoadPhoto(_patron.PhotoPath);
+                    try
+                    {
+                        this.patronControl.LoadPhoto(_patron.PhotoPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        SetGlobalError("patron", ex.Message);
+                    }
                 });
             }
 
@@ -759,9 +792,13 @@ namespace dp2SSL
                 }
                 else
                 {
+                    this.booksControl.Visibility = Visibility.Visible;
+
                     // (普通)还书和续借操作并不需要读者卡
                     if (borrowButton.Visibility != Visibility.Visible)
                         this.patronControl.Visibility = Visibility.Collapsed;
+                    else
+                        this.patronControl.Visibility = Visibility.Visible; // 2019/9/3
                 }
             }
         }
@@ -1190,6 +1227,7 @@ namespace dp2SSL
             return new NormalResult();
         }
 
+#if NO
         void LoadPhoto(string photo_path)
         {
             if (string.IsNullOrEmpty(photo_path))
@@ -1235,7 +1273,7 @@ namespace dp2SSL
                     stream.Dispose();
             }
         }
-
+#endif
         // 第二阶段：填充图书信息的 PII 和 Title 字段
         async Task FillBookFields(BaseChannel<IRfid> channel,
             List<Entity> entities)
@@ -1572,6 +1610,7 @@ out string strError);
                             continue;
                         }
 
+                        // TODO: 增加检查 EAS 现有状态功能，如果已经是 true 则不用修改，后面 API 遇到出错后也不要回滚 EAS
                         // return 操作，提前修改 EAS
                         // 注: 提前修改 EAS 的好处是比较安全。相比 API 执行完以后再修改 EAS，提前修改 EAS 成功后，无论后面发生什么，读者都无法拿着这本书走出门禁
                         {
@@ -1645,7 +1684,11 @@ out string strError);
                         if (entity.Error != null)
                             continue;
 
-                        entity.SetError($"{action_name}成功", lRet == 1 ? "yellow" : "green");
+                        string message = $"{action_name}成功";
+                        if (lRet == 1 && string.IsNullOrEmpty(strError) == false)
+                            message = strError;
+                        entity.SetError(message,
+                            lRet == 1 ? "yellow" : "green");
                         success_count++;
                         // 刷新显示。特别是一些关于借阅日期，借期，应还日期的内容
                     }
@@ -1690,12 +1733,21 @@ out string strError);
                     // 成功
                     string backColor = "green";
                     string message = $"{action_name}操作成功 {success_count} 笔";
+                    string speak = $"{action_name}完成";
+
                     if (skip_count > 0)
                         message += $" (另有 {skip_count} 笔被忽略)";
                     if (skip_count > 0 && success_count == 0)
                     {
                         backColor = "yellow";
                         message = $"全部 {skip_count} 笔{action_name}操作被忽略";
+                        speak = $"{action_name}失败";
+                    }
+                    if (skip_count == 0 && success_count == 0)
+                    {
+                        backColor = "yellow";
+                        message = $"请先把图书放到读卡器上，再进行 {action_name}操作";
+                        speak = $"{action_name}失败";
                     }
 
                     DisplayError(ref progress, message, backColor);
@@ -1713,7 +1765,7 @@ out string strError);
                     // 重新装载读者信息和显示
                     var task = FillPatronDetail(true);
 
-                    App.CurrentApp.Speak($"{action_name}完成");
+                    App.CurrentApp.Speak(speak);
                 }
 
                 return; // new NormalResult { Value = success_count };
@@ -2686,13 +2738,20 @@ string usage)
         {
             _patron.Clear();
 
-            if (!Application.Current.Dispatcher.CheckAccess())
-                Application.Current.Dispatcher.Invoke(new Action(() =>
-                {
+            if (this.patronControl.BorrowedEntities.Count > 0)
+            {
+                if (!Application.Current.Dispatcher.CheckAccess())
+                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                    {
+                        this.patronControl.BorrowedEntities.Clear();
+                    }));
+                else
                     this.patronControl.BorrowedEntities.Clear();
-                }));
-            else
-                this.patronControl.BorrowedEntities.Clear();
+            }
+        }
+
+        void IDisposable.Dispose()
+        {
         }
     }
 }

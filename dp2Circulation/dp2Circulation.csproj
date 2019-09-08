@@ -52,7 +52,7 @@
     <SuiteName>dp2 V3</SuiteName>
     <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>81</ApplicationRevision>
+    <ApplicationRevision>112</ApplicationRevision>
     <ApplicationVersion>3.4.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -127,6 +127,9 @@
     <Reference Include="Ionic.Zip, Version=1.9.1.8, Culture=neutral, PublicKeyToken=edbe51ad942a3f5c, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\Ionic.Zip.dll</HintPath>
+    </Reference>
+    <Reference Include="Jint, Version=0.0.0.0, Culture=neutral, PublicKeyToken=2e92ba9c8d81157f, processorArchitecture=MSIL">
+      <HintPath>..\packages\Jint.2.11.58\lib\net451\Jint.dll</HintPath>
     </Reference>
     <Reference Include="Jurassic, Version=3.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\Jurassic.3.0.0\lib\net45\Jurassic.dll</HintPath>
@@ -334,6 +337,12 @@
     <Compile Include="Charging\ColorSummaryControl.Designer.cs">
       <DependentUpon>ColorSummaryControl.cs</DependentUpon>
     </Compile>
+    <Compile Include="Charging\EasForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Charging\EasForm.Designer.cs">
+      <DependentUpon>EasForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="Charging\ExternalChannel.cs" />
     <Compile Include="Charging\IChargingForm.cs" />
     <Compile Include="Charging\InventoryFromFileDialog.cs">
@@ -505,12 +514,6 @@
     </Compile>
     <Compile Include="Entity\SelectColumnDialog.Designer.cs">
       <DependentUpon>SelectColumnDialog.cs</DependentUpon>
-    </Compile>
-    <Compile Include="Entity\SelectTagDialog.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="Entity\SelectTagDialog.Designer.cs">
-      <DependentUpon>SelectTagDialog.cs</DependentUpon>
     </Compile>
     <Compile Include="IM\ChatForm.cs">
       <SubType>Form</SubType>
@@ -1738,6 +1741,9 @@
     <EmbeddedResource Include="Charging\ColorSummaryControl.resx">
       <DependentUpon>ColorSummaryControl.cs</DependentUpon>
     </EmbeddedResource>
+    <EmbeddedResource Include="Charging\EasForm.resx">
+      <DependentUpon>EasForm.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Charging\InventoryFromFileDialog.resx">
       <DependentUpon>InventoryFromFileDialog.cs</DependentUpon>
     </EmbeddedResource>
@@ -1822,9 +1828,6 @@
     </EmbeddedResource>
     <EmbeddedResource Include="Entity\SelectColumnDialog.resx">
       <DependentUpon>SelectColumnDialog.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Entity\SelectTagDialog.resx">
-      <DependentUpon>SelectTagDialog.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="IM\ChatForm.resx">
       <DependentUpon>ChatForm.cs</DependentUpon>
@@ -3217,6 +3220,10 @@
     <ProjectReference Include="..\DigitalPlatform.ResultSet\DigitalPlatform.ResultSet.csproj">
       <Project>{86E0817D-79A4-4769-B450-C8352D0D1907}</Project>
       <Name>DigitalPlatform.ResultSet</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\DigitalPlatform.RFID.Manager\DigitalPlatform.RFID.Manager.csproj">
+      <Project>{E45F79DF-041F-4DA8-9365-909F53BAEE72}</Project>
+      <Name>DigitalPlatform.RFID.Manager</Name>
     </ProjectReference>
     <ProjectReference Include="..\DigitalPlatform.RFID.UI\DigitalPlatform.RFID.UI.csproj">
       <Project>{FE5B6586-85F4-4850-A66D-5607ECB08F9B}</Project>

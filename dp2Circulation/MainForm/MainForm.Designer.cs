@@ -245,6 +245,7 @@
             this.toolStripButton_close = new System.Windows.Forms.ToolStripButton();
             this.splitter_fixed = new System.Windows.Forms.Splitter();
             this.timer_operHistory = new System.Windows.Forms.Timer(this.components);
+            this.toolStripStatusLabel_rfid = new System.Windows.Forms.ToolStripStatusLabel();
             this.menuStrip_main.SuspendLayout();
             this.statusStrip_main.SuspendLayout();
             this.toolStrip_main.SuspendLayout();
@@ -373,6 +374,7 @@
             this.MenuItem_openChargingForm.Name = "MenuItem_openChargingForm";
             this.MenuItem_openChargingForm.Size = new System.Drawing.Size(243, 30);
             this.MenuItem_openChargingForm.Text = "出纳窗(&C)";
+            this.MenuItem_openChargingForm.Visible = false;
             this.MenuItem_openChargingForm.Click += new System.EventHandler(this.MenuItem_openChargingForm_Click);
             // 
             // MenuItem_openEntityRegisterWizard
@@ -1384,7 +1386,8 @@
             this.statusStrip_main.ImageScalingSize = new System.Drawing.Size(32, 32);
             this.statusStrip_main.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripProgressBar_main,
-            this.toolStripStatusLabel_main});
+            this.toolStripStatusLabel_main,
+            this.toolStripStatusLabel_rfid});
             this.statusStrip_main.Location = new System.Drawing.Point(0, 525);
             this.statusStrip_main.Name = "statusStrip_main";
             this.statusStrip_main.Padding = new System.Windows.Forms.Padding(2, 0, 21, 0);
@@ -1403,7 +1406,7 @@
             // toolStripStatusLabel_main
             // 
             this.toolStripStatusLabel_main.Name = "toolStripStatusLabel_main";
-            this.toolStripStatusLabel_main.Size = new System.Drawing.Size(768, 25);
+            this.toolStripStatusLabel_main.Size = new System.Drawing.Size(722, 25);
             this.toolStripStatusLabel_main.Spring = true;
             this.toolStripStatusLabel_main.Text = "欢迎使用 dp2Circulation ...";
             this.toolStripStatusLabel_main.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
@@ -1901,6 +1904,11 @@
             this.splitter_fixed.TabIndex = 6;
             this.splitter_fixed.TabStop = false;
             // 
+            // toolStripStatusLabel_rfid
+            // 
+            this.toolStripStatusLabel_rfid.Name = "toolStripStatusLabel_rfid";
+            this.toolStripStatusLabel_rfid.Size = new System.Drawing.Size(0, 25);
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(144F, 144F);
@@ -2141,6 +2149,7 @@
         private System.Windows.Forms.ToolStripMenuItem MenuItem_openAuthoritySearchForm;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator32;
         private System.Windows.Forms.ToolStripMenuItem ToolStripMenuItem_openRfidToolForm;
+        private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabel_rfid;
     }
 }
 

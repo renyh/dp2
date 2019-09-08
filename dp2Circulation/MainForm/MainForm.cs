@@ -43,6 +43,7 @@ using static dp2Circulation.MyForm;
 using DigitalPlatform.Core;
 using DigitalPlatform.Z3950;
 using DigitalPlatform.LibraryServer.Common;
+using DigitalPlatform.RFID;
 
 namespace dp2Circulation
 {
@@ -388,9 +389,9 @@ namespace dp2Circulation
             }
             catch (FileLoadException ex)
             {
-                if (DetectVirus.Detect360() == true)
+                if (DetectVirus.DetectXXX() == true)
                 {
-                    MessageBox.Show("dp2Circulation (内务)受到 360 软件干扰而无法启动。请关闭或者卸载 360 软件然后再重新启动 dp2Circulation (内务)");
+                    MessageBox.Show($"dp2Circulation (内务)受到 {DetectVirus.ViruName} 软件干扰而无法启动。请关闭或者卸载 {DetectVirus.ViruName} 软件然后再重新启动 dp2Circulation (内务)");
                     throw ex;
                 }
                 ReportError("dp2circulation 创建 QrRecognitionControl 过程出现异常", ExceptionUtil.GetDebugText(ex));
@@ -400,6 +401,7 @@ namespace dp2Circulation
                 ReportError("dp2circulation 创建 QrRecognitionControl 过程出现异常", ExceptionUtil.GetDebugText(ex));
             }
         }
+
 
         /// <summary>
         /// 是否为安装后第一次运行
@@ -520,7 +522,7 @@ Stack:
                 // && ApplicationDeployment.IsNetworkDeployed
                 )
             {
-                if (DetectVirus.Detect360() == true)
+                if (DetectVirus.DetectXXX() == true)
                 {
                     Program.PromptAndExit(this, "dp2Circulation (内务)受到 360 软件干扰而无法启动 [文件" + strFontFilePath + "不存在]。请关闭或者卸载 360 软件然后再重新启动 dp2Circulation (内务)");
                     return;
@@ -811,7 +813,7 @@ Stack:
             {
                 // 2019/7/12
                 AppInfo.SetString("global",
-                    "currentLocation", 
+                    "currentLocation",
                     GetCurrentLocation());
 
                 // 消除短期保存的密码
@@ -984,7 +986,19 @@ Stack:
                     this.BeginInvoke(d);
                 }
             }
+
+            // Trap WM_ACTIVATEAPP
+            if (m.Msg == 0x1c)
+                OnActivateApp(m.WParam != IntPtr.Zero);
+
             base.WndProc(ref m);
+        }
+
+        // https://stackoverflow.com/questions/1747562/application-deactivate-event
+        protected void OnActivateApp(bool activate)
+        {
+            // Console.WriteLine("Activate {0}", activate);
+            SetRfidManagerPause(!activate);
         }
 
         private void ShowMe()
@@ -1592,6 +1606,18 @@ Stack:
                     chargingform.ClearItemAndBiblioControl();
                     chargingform.ChangeLayout((bool)e.Value);
                 }
+            }
+
+            if (e.Section == "cardreader"
+                && e.Entry == "rfidCenterUrl")
+            {
+                Task.Run(() =>
+                {
+                    // 迫使 URL 生效
+                    //RfidManager.Url = this.RfidCenterUrl;
+                    //RfidManager.Clear();
+                    StartOrStopRfidManager();
+                });
             }
         }
 
@@ -2953,7 +2979,7 @@ false);
             {
                 if (StringUtil.IsInList("clientscanvirus", channel.Rights) == true)
                 {
-                    if (DetectVirus.Detect360() == true || DetectVirus.DetectGuanjia() == true)
+                    if (DetectVirus.DetectXXX() == true || DetectVirus.DetectGuanjia() == true)
                     {
                         channel.Close();
                         Program.PromptAndExit(this, "dp2Circulation 被木马软件干扰，无法启动。");
@@ -3910,7 +3936,7 @@ Stack:
             return -1;
         }
 
-#region EnsureXXXForm ...
+        #region EnsureXXXForm ...
 
         /// <summary>
         /// 获得最顶层的 UtilityForm 窗口，如果没有，则新创建一个
@@ -4198,7 +4224,7 @@ Stack:
             return EnsureChildForm<BiblioStatisForm>();
         }
 
-#endregion
+        #endregion
 
         private void toolButton_borrow_Click(object sender, EventArgs e)
         {
@@ -4932,7 +4958,7 @@ Stack:
         //      -1  出错
         //      0   不需要进行变换
         //      1   需要进行变换
-        public int NeedTransformBarcode(string strLibraryCode, 
+        public int NeedTransformBarcode(string strLibraryCode,
             out string strError)
         {
             strError = "";
@@ -7916,7 +7942,7 @@ Keys keyData)
             OpenWindow<MessageForm>();
         }
 
-#region 序列号机制
+        #region 序列号机制
 
         bool _testMode = false;
 
@@ -8235,7 +8261,7 @@ Keys keyData)
 
 #endif
 
-#endregion
+        #endregion
 
         private void MenuItem_resetSerialCode_Click(object sender, EventArgs e)
         {
@@ -8342,7 +8368,7 @@ Keys keyData)
             return Path.Combine(this.UserTempDir, "~" + strPrefix + Guid.NewGuid().ToString());
         }
 
-#region servers.xml
+        #region servers.xml
 
         // HnbUrl.HnbUrl
 
@@ -8359,7 +8385,7 @@ Keys keyData)
 <!--
   <server name='网众' type='dp2library' url='net.tcp://118.25.225.224:8002/dp2library/' userName='?'/>
 -->
-  <server name='红泥巴.数字平台中心' type='dp2library' url='net.tcp://58.87.101.80:101/hnb/' userName='public'/>
+  <server name='红泥巴.数字平台中心' type='dp2library' url='rest.http://58.87.101.80/hnb/rest' userName='public'/>
   <server name='亚马逊中国' type='amazon' url='webservices.amazon.cn'/>
 </root>";
 
@@ -8665,7 +8691,7 @@ Keys keyData)
             return this._currentUserRights;
         }
 
-#endregion // servers.xml
+        #endregion // servers.xml
 
         void EnableFingerprintSendKey(bool enable)
         {
@@ -8712,10 +8738,23 @@ Keys keyData)
                 }
             }
 #endif
+
+            // 激活 RfidManager
+            // 注意这是对 Application Activate 的补充。怕后者有小概率不可靠
+            SetRfidManagerPause(false);
+        }
+
+        void SetRfidManagerPause(bool pause)
+        {
+            RfidManager.Pause = pause;
+            this.toolStripStatusLabel_rfid.Text = pause ? "" : "RFID";
         }
 
         private void MainForm_Deactivate(object sender, EventArgs e)
         {
+            // 休眠 RfidManager
+            // SetRfidManagerPause(true);
+
             // this.Speak("deactivated");
 
 #if NO
@@ -8730,7 +8769,7 @@ Keys keyData)
 #endif
         }
 
-#region 消息过滤
+        #region 消息过滤
 
 #if NO
         public event MessageFilterEventHandler MessageFilter = null;
@@ -8760,7 +8799,7 @@ Keys keyData)
 
 #endif
 
-#endregion
+        #endregion
 
         /// <summary>
         /// 获得当前 dp2library 服务器相关的本地配置目录路径。这是在用户目录中用 URL 映射出来的子目录名

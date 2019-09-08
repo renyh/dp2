@@ -8,12 +8,11 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using DigitalPlatform;
-using DigitalPlatform.Core;
-using DigitalPlatform.LibraryClient;
 using DigitalPlatform.RFID;
 
 namespace dp2SSL
 {
+#if REMOVED
     public static class RfidManager
     {
         static List<OneTag> _lastTags = null;
@@ -295,4 +294,6 @@ null);
     {
         public ListTagsResult Result { get; set; }
     }
+
+#endif
 }

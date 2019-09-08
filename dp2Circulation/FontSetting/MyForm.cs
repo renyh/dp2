@@ -9,6 +9,8 @@ using System.Reflection;
 using System.Xml;
 using System.Runtime.Remoting.Channels.Ipc;
 using System.Runtime.Remoting.Channels;
+using System.Threading.Tasks;
+using System.Runtime.Remoting;
 
 using DigitalPlatform;
 using DigitalPlatform.Text;
@@ -22,8 +24,7 @@ using DigitalPlatform.LibraryClient;
 using DigitalPlatform.LibraryClient.localhost;
 using DigitalPlatform.Interfaces;
 using DigitalPlatform.RFID;
-using System.Threading.Tasks;
-using System.Runtime.Remoting;
+using DigitalPlatform.Core;
 
 // 2013/3/16 添加 XML 注释
 
@@ -334,6 +335,23 @@ namespace dp2Circulation
         {
             if (this._floatingMessage != null)
                 this._floatingMessage.OnResizeOrMove();
+        }
+
+        public void ShowMessageAutoClear(string strMessage,
+string strColor = "",
+int delay = 2000,
+bool bClickClose = false)
+        {
+            Task.Run(() =>
+            {
+                ShowMessage(strMessage,
+    strColor,
+    bClickClose);
+                System.Threading.Thread.Sleep(delay);
+                // 中间一直没有变化才去消除它
+                if (_floatingMessage.Text == strMessage)
+                    ClearMessage();
+            });
         }
 
         public void ShowMessage(string strMessage,
@@ -1754,6 +1772,8 @@ out string strError)
 
         #region RFID 有关功能
 
+#if REMOVED
+
         public class RfidChannel
         {
             public IpcClientChannel Channel { get; set; }
@@ -1803,6 +1823,9 @@ out string strError)
             }
         }
 
+#endif
+
+#if REMOVED
         // return:
         //      -2  remoting服务器连接失败。驱动程序尚未启动
         //      -1  出错
@@ -1834,6 +1857,8 @@ out string strError)
                 return new NormalResult { Value = -1, ErrorInfo = strError };
             }
         }
+
+#endif
 
         #endregion
 
@@ -2043,7 +2068,8 @@ out string strError)
             }
             ERROR1:
             return Task.FromResult(
-            new NormalResult {
+            new NormalResult
+            {
                 Value = -1,
                 ErrorInfo = strError
             });
@@ -2621,6 +2647,18 @@ Keys keyData)
                 this.ReturnChannel(channel);
             }
         }
+
+        public void SetError(string type, string error)
+        {
+            _errorTable.SetError(type, error);
+        }
+
+        public void ClearErrors(string type)
+        {
+            _errorTable.SetError(type, "");
+        }
+
+        internal ErrorTable _errorTable = null;
     }
 
     public class FilterHost

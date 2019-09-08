@@ -19,15 +19,62 @@ namespace RfidDrivers.First
 {
     public class Driver1 : IRfidDriver
     {
+        string _state = "closed";
+
         // 状态。
         //      "initializing" 表示正在进行初始化; "closed" 表示已经不能使用
-        public string State { get; set; }
+        public string State
+        {
+            get
+            {
+                return _state;
+            }
+            set
+            {
+                _state = value;
+            }
+        }
+
+        public bool Pause
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(this.State) == false)
+                    return true;
+                return false;
+            }
+        }
+
+        // 当前正在进行的 API 调用数
+        long _apiCount = 0;
+
+        public void IncApiCount()
+        {
+            Interlocked.Increment(ref _apiCount);
+        }
+
+        public void DecApiCount()
+        {
+            Interlocked.Decrement(ref _apiCount);
+        }
+
+        void WaitApiSilence()
+        {
+            while (true)
+            {
+                var v = Interlocked.Read(ref _apiCount);
+                if (v <= 0)
+                    return;
+                Thread.Sleep(10);
+            }
+        }
 
         internal ReaderWriterLockSlim _lock = new ReaderWriterLockSlim();
 
         void Lock()
         {
             _lock.EnterWriteLock();
+            // _lock.TryEnterWriteLock(1000);  // 2019/8/29
         }
 
         void Unlock()
@@ -44,18 +91,47 @@ namespace RfidDrivers.First
             }
         }
 
+        List<ShelfLock> _shelfLocks = new List<ShelfLock>();
+        public List<ShelfLock> ShelfLocks
+        {
+            get
+            {
+                return new List<ShelfLock>(_shelfLocks);
+            }
+        }
+
+        // parameters:
+        //      style   风格列表。xxx,xxx,xxx 形态
+        //              其中，lock:COM1|COM2 指定锁控 COM 口
         public InitializeDriverResult InitializeDriver(string style,
             List<HintInfo> hint_table)
         {
             this.State = "initializing";
+
+            // 等待所有 API 调用安静下来
+            WaitApiSilence();
             Lock();
             try
             {
+
+
                 GetDriversInfo();
 
                 NormalResult result = OpenAllReaders(hint_table, out List<HintInfo> output_hint_table);
                 if (result.Value == -1)
                     return new InitializeDriverResult(result);
+
+                string lock_param = StringUtil.GetParameterByPrefix(style, "lock");
+                if (lock_param != null)
+                {
+                    var lock_result = OpenAllLocks(lock_param);
+                    if (lock_result.Value == -1)
+                        return new InitializeDriverResult
+                        {
+                            Value = -1,
+                            ErrorInfo = lock_result.ErrorInfo
+                        };
+                }
 
                 return new InitializeDriverResult
                 {
@@ -73,9 +149,14 @@ namespace RfidDrivers.First
         public NormalResult ReleaseDriver()
         {
             this.State = "initializing";
+            // 等待所有 API 调用安静下来
+            WaitApiSilence();
             Lock();
             try
             {
+
+                CloseAllLocks();
+
                 return CloseAllReaders();
             }
             finally
@@ -98,6 +179,14 @@ namespace RfidDrivers.First
                 return error;
             readers.AddRange(OpenComReaders(name_table, hint_table, out output_hint_table));
             _readers = readers;
+
+            // 2019/8/24 添加
+            // 使用了暗示信息，但始终没有找到任何一个读卡器，这时候要尝试一次不使用暗示信息
+            if (readers.Count == 0 && hint_table != null)
+            {
+                _readers = OpenComReaders(name_table, null, out output_hint_table);
+            }
+
             return new NormalResult();
         }
 
@@ -129,6 +218,7 @@ namespace RfidDrivers.First
 
         // 打开所有 COM 口读卡器
         // parameters:
+        //      name_table  用于查重的名字表
         //      hint_table  暗示信息表。如果为 null，表示不提供暗示信息
         //                  注：暗示信息表可以加快 COM 口读卡器打开的速度
         static List<Reader> OpenComReaders(Hashtable name_table,
@@ -205,7 +295,7 @@ namespace RfidDrivers.First
             }
 
             // 找出不是读卡器的 COM 口
-            foreach(Reader reader in readers)
+            foreach (Reader reader in readers)
             {
                 var com_name = reader.SerialNumber;
                 var found = results.Find((o) => { return o.SerialNumber == com_name; });
@@ -225,6 +315,8 @@ namespace RfidDrivers.First
         }
 
         // 打开所有 USB 读卡器
+        // parameters:
+        //      name_table  用于查重的名字表
         static List<Reader> OpenUsbReaders(Hashtable name_table,
             out NormalResult error)
         {
@@ -372,6 +464,9 @@ namespace RfidDrivers.First
             return new NormalResult();
         }
 
+        // result.Value:
+        //      -1
+        //      0
         NormalResult GetReaderHandle(string reader_name,
             out UIntPtr handle,
             out string protocols)
@@ -1787,7 +1882,7 @@ namespace RfidDrivers.First
             if (string.IsNullOrEmpty(readerDriverName))
             {
                 readerDriverName = "M201";  // "RL8000";
-                // readerDriverName = readerDriverInfoList[0].m_name;
+                                            // readerDriverName = readerDriverInfoList[0].m_name;
             }
 
             if (string.IsNullOrEmpty(comm_type))
@@ -2169,6 +2264,7 @@ namespace RfidDrivers.First
             }
         }
 
+        // TODO: 中间某个读卡器出错，还要继续往后用其他读卡器探索读取？
         // TODO: 根据 PII 寻找标签。如果找到两个或者以上，并且它们 UID 不同，会报错
         // 注：PII 相同，UID 也相同，属于正常情况，这是因为多个读卡器都读到了同一个标签的缘故
         // return:
@@ -2179,6 +2275,7 @@ namespace RfidDrivers.First
         //      可能会抛出 System.AccessViolationException 异常
         public FindTagResult FindTagByPII(
             string reader_name,
+            string protocols,   // 2019/8/28
             string pii)
         {
 #if NO
@@ -2193,8 +2290,13 @@ namespace RfidDrivers.First
             Lock();
             try
             {
+                FindTagResult temp_result = null;
+
                 foreach (Reader reader in readers)
                 {
+                    if (StringUtil.IsInList(reader.Protocols, protocols) == false)
+                        continue;
+
                     // UIntPtr hreader = reader.ReaderHandle;
                     // 枚举所有标签
                     byte ai_type = RFIDLIB.rfidlib_def.AI_TYPE_NEW;
@@ -2202,19 +2304,22 @@ namespace RfidDrivers.First
                     UInt32 nTagCount = 0;
                     int ret = tag_inventory(
                         reader.ReaderHandle,
-                        reader.Protocols,
+                        protocols,  // reader.Protocols,
                         ai_type,
                         1,
                         new Byte[] { 1 },
                         ref nTagCount,
                         out List<InventoryInfo> results);
                     if (ret != 0)
-                        return new FindTagResult
+                    {
+                        temp_result = new FindTagResult
                         {
                             Value = -1,
                             ErrorInfo = "tag_inventory error",
                             ErrorCode = GetErrorCode(ret, reader.ReaderHandle)
                         };
+                        continue;
+                    }
 
                     Debug.Assert(nTagCount == results.Count);
 
@@ -2225,7 +2330,14 @@ namespace RfidDrivers.First
     info?.UID,
     info.TagType);
                         if (hTag == UIntPtr.Zero)
-                            return new FindTagResult { Value = -1, ErrorInfo = "connectTag Error" };
+                        {
+                            temp_result = new FindTagResult
+                            {
+                                Value = -1,
+                                ErrorInfo = "connectTag Error"
+                            };
+                            continue;
+                        }
                         try
                         {
                             int iret;
@@ -2247,12 +2359,15 @@ namespace RfidDrivers.First
                                 ref blkNum,
                                 ref icref);
                             if (iret != 0)
-                                return new FindTagResult
+                            {
+                                temp_result = new FindTagResult
                                 {
                                     Value = -1,
                                     ErrorInfo = "ISO15693_GetSystemInfo() error 1",
                                     ErrorCode = GetErrorCode(iret, reader.ReaderHandle)
                                 };
+                                continue;
+                            }
 
                             ReadBlocksResult result0 = ReadBlocks(
                                 reader.ReaderHandle,
@@ -2262,7 +2377,15 @@ namespace RfidDrivers.First
                         blkSize,
                         true);
                             if (result0.Value == -1)
-                                return new FindTagResult { Value = -1, ErrorInfo = result0.ErrorInfo, ErrorCode = result0.ErrorCode };
+                            {
+                                temp_result = new FindTagResult
+                                {
+                                    Value = -1,
+                                    ErrorInfo = result0.ErrorInfo,
+                                    ErrorCode = result0.ErrorCode
+                                };
+                                continue;
+                            }
 
                             // 解析出 PII
                             LogicChip chip = LogicChip.From(result0.Bytes,
@@ -2272,7 +2395,7 @@ namespace RfidDrivers.First
                                 return new FindTagResult
                                 {
                                     Value = 1,
-                                    ReaderName = reader_name,
+                                    ReaderName = reader.Name,   // 2019/8/28
                                     UID = info.UID
                                 };
                         }
@@ -2282,6 +2405,10 @@ namespace RfidDrivers.First
                         }
                     }
                 }
+
+                // 如果中间曾出现过报错
+                if (temp_result != null)
+                    return temp_result;
 
                 return new FindTagResult
                 {
@@ -2947,6 +3074,9 @@ namespace RfidDrivers.First
 
         // parameters:
         //      tag_type    如果 uid 为空，则 tag_type 应为 RFIDLIB.rfidlib_def.RFID_ISO15693_PICC_ICODE_SLI_ID
+        // result.Value
+        //      -1
+        //      0
         public GetTagInfoResult GetTagInfo(// byte[] uid, UInt32 tag_type
             string reader_name,
             InventoryInfo info)
@@ -3261,67 +3391,67 @@ namespace RfidDrivers.First
         }
 
         /*
-附录3. RFIDLIB API错误代码表
-错误代码	  描述
-0	无错误，表示API调用成功。
--1	未知错误
--2	与读卡器硬件的通信失败
--3	API的传入参数有误
--4	API的传入参数的值不支持，如参数值只能是0-5，如果传入6那么会返回该错误。
--5	超时，发送到读卡器的命令，在设定时间内等不到数据返回。
--6	API申请内存失败
--7	功能未开启
--8	保留
--9	保留
--10	保留
--11	保留
--12	读卡器返回的数据包长度有误
--13	保留
--14	保留
--15	保留
--16	保留
--17	读卡器返回操作失败标识数据包，可用API
-RDR_GetReaderLastReturnError 获取该失败的错误代码。
--18	保留
--19	保留
--20	保留
--21	Inventory的停止触发器发生，举个例子：假设设定1秒为Inventory
-的最大读卡时间，如果在1秒钟内还没读完所有的标签，读卡器会终止Inventory，那么API会返回该错误告诉应用程序，可能还有标签没读完。
--22	标签操作命令不支持
--23	传入RDR_SetConfig或RDR_GetConfig的配置项不支持。
--24	保留
--25	TCP socket错误，API返回该错误表明TCP连接已断开。
--26	应用层传入的缓冲区太小。
--27	与读卡器返回的数据有误。
-0	No error
--1	Unknown error
--2	IO error
--3	Parameter error
--4	Parameter value error
--5	Reader respond timeout
--6	Memory allocation fail
--7	Reserved
--8	Reserved
--9	Reserved
--10	Reserved
--11	Reserved
--12	Invalid message size from reader
--13	Reserved
--14	Reserved
--15	Reserved
--16	Reserved
--17	Error from reader, 
-can use “RDR_GetReaderLastReturnError” to get reader error code .
--18	Reserved
--19	Reserved
--20	Reserved
--21	Timeout stop trigger occur .
--22	Invalid tag command
--23	Invalid Configuration block No
--24	Reserved
--25	TCP socket error
--26	Size of input buffer too small.
--27	Reserved
+    附录3. RFIDLIB API错误代码表
+    错误代码	  描述
+    0	无错误，表示API调用成功。
+    -1	未知错误
+    -2	与读卡器硬件的通信失败
+    -3	API的传入参数有误
+    -4	API的传入参数的值不支持，如参数值只能是0-5，如果传入6那么会返回该错误。
+    -5	超时，发送到读卡器的命令，在设定时间内等不到数据返回。
+    -6	API申请内存失败
+    -7	功能未开启
+    -8	保留
+    -9	保留
+    -10	保留
+    -11	保留
+    -12	读卡器返回的数据包长度有误
+    -13	保留
+    -14	保留
+    -15	保留
+    -16	保留
+    -17	读卡器返回操作失败标识数据包，可用API
+    RDR_GetReaderLastReturnError 获取该失败的错误代码。
+    -18	保留
+    -19	保留
+    -20	保留
+    -21	Inventory的停止触发器发生，举个例子：假设设定1秒为Inventory
+    的最大读卡时间，如果在1秒钟内还没读完所有的标签，读卡器会终止Inventory，那么API会返回该错误告诉应用程序，可能还有标签没读完。
+    -22	标签操作命令不支持
+    -23	传入RDR_SetConfig或RDR_GetConfig的配置项不支持。
+    -24	保留
+    -25	TCP socket错误，API返回该错误表明TCP连接已断开。
+    -26	应用层传入的缓冲区太小。
+    -27	与读卡器返回的数据有误。
+    0	No error
+    -1	Unknown error
+    -2	IO error
+    -3	Parameter error
+    -4	Parameter value error
+    -5	Reader respond timeout
+    -6	Memory allocation fail
+    -7	Reserved
+    -8	Reserved
+    -9	Reserved
+    -10	Reserved
+    -11	Reserved
+    -12	Invalid message size from reader
+    -13	Reserved
+    -14	Reserved
+    -15	Reserved
+    -16	Reserved
+    -17	Error from reader, 
+    can use “RDR_GetReaderLastReturnError” to get reader error code .
+    -18	Reserved
+    -19	Reserved
+    -20	Reserved
+    -21	Timeout stop trigger occur .
+    -22	Invalid tag command
+    -23	Invalid Configuration block No
+    -24	Reserved
+    -25	TCP socket error
+    -26	Size of input buffer too small.
+    -27	Reserved
 
          * */
         static string GetErrorCode(int value, UIntPtr hr)
@@ -3463,6 +3593,216 @@ can use “RDR_GetReaderLastReturnError” to get reader error code .
             {
                 Unlock();
             }
+        }
+
+
+        #region ShelfLock
+
+        void CloseAllLocks()
+        {
+            foreach (var shelfLock in this._shelfLocks)
+            {
+                DisconnectLock(shelfLock.LockHandle);
+                shelfLock.LockHandle = UIntPtr.Zero;
+            }
+        }
+
+        // parameters:
+        //      lock_param  COM口列表。形如 COM1|COM2。若为空，表示自动探测所用的 COM 口
+        NormalResult OpenAllLocks(string lock_param)
+        {
+            List<string> used_ports = new List<string>();
+            // 找出已经被读卡器占用的 COM 口
+            foreach (var reader in _readers)
+            {
+                if (reader.Type == "COM")
+                    used_ports.Add(reader.SerialNumber);
+            }
+
+            // 枚举 COM 口，尝试打开
+            List<string> ports = new List<string>();
+
+            if (string.IsNullOrEmpty(lock_param))
+            {
+                UInt32 nCOMCnt = RFIDLIB.rfidlib_reader.COMPort_Enum();
+
+                Driver1Manager.Log?.Debug($"OpenAllLock() COMPort_Enum() return [{nCOMCnt}]");
+
+                for (uint i = 0; i < nCOMCnt; i++)
+                {
+                    StringBuilder comName = new StringBuilder();
+                    comName.Append('\0', 64);
+                    RFIDLIB.rfidlib_reader.COMPort_GetEnumItem(i, comName, (UInt32)comName.Capacity);
+
+                    Driver1Manager.Log?.Debug($"OpenAllLock() COMPort_Enum() {i}: comName=[{comName.ToString()}]");
+
+                    if (used_ports.IndexOf(comName.ToString()) != -1)
+                    {
+                        Driver1Manager.Log?.Debug($"OpenAllLock() comName=[{comName.ToString()}] used by readers, skiped");
+                        continue;
+                    }
+
+                    ports.Add(comName.ToString());
+                }
+            }
+            else
+            {
+                ports = StringUtil.SplitList(lock_param, '|');
+            }
+
+            List<ShelfLock> locks = new List<ShelfLock>();
+            foreach (string port in ports)
+            {
+                // 尝试打开
+                var result = ConnectLock(port);
+                if (result.Value != -1)
+                {
+                    locks.Add(result.ShelfLock);
+                }
+                else
+                {
+                    Driver1Manager.Log?.Debug($"OpenAllLock() ConnectLock() comName=[{port}] failed, errorinfo={result.ErrorInfo}, errorcode={result.ErrorCode}");
+                }
+            }
+
+            this._shelfLocks = locks;
+
+            return new NormalResult();
+        }
+
+        class ConnectLockResult : NormalResult
+        {
+            public ShelfLock ShelfLock { get; set; }
+        }
+
+        void DisconnectLock(UIntPtr hElectronicLock)
+        {
+            if (hElectronicLock == UIntPtr.Zero)
+                return;
+
+            RFIDLIB.miniLib_Lock.Mini_Disconnect(hElectronicLock);
+        }
+
+        ConnectLockResult ConnectLock(string port)
+        {
+            UIntPtr hElectronicLock = UIntPtr.Zero; //Electronic lock handle
+
+            int ret = RFIDLIB.miniLib_Lock.Mini_Connect(port, 9600, "8N1", ref hElectronicLock);
+            if (ret != 0)
+                return new ConnectLockResult
+                {
+                    Value = -1,
+                    ErrorInfo = "Connect Lock fail",
+                    ErrorCode = ret.ToString()
+                };
+
+            return new ConnectLockResult
+            {
+                Value = 0,
+                ShelfLock = new ShelfLock
+                {
+                    Name = port,
+                    LockHandle = hElectronicLock
+                }
+            };
+        }
+
+        #endregion
+
+        List<ShelfLock> GetLocksByName(string lock_name)
+        {
+            List<ShelfLock> results = new List<ShelfLock>();
+            foreach (ShelfLock current_lock in _shelfLocks)
+            {
+                if (current_lock.LockHandle == UIntPtr.Zero)
+                    continue;
+                if (Reader.MatchReaderName(lock_name, current_lock.Name))
+                    results.Add(current_lock);
+            }
+
+            return results;
+        }
+
+        // 探测锁状态
+        // parameters:
+        //      lockName    锁名字。如果为 * 表示所有的锁
+        //      index       锁编号。从 0 开始计数
+        public GetLockStateResult GetShelfLockState(string lockName,
+            int index)
+        {
+            List<ShelfLock> locks = GetLocksByName(lockName);
+            if (locks.Count == 0)
+                return new GetLockStateResult
+                {
+                    Value = -1,
+                    ErrorInfo = $"当前不存在名为 '{lockName}' 的门锁对象",
+                    ErrorCode = "lockNotFound"
+                };
+
+            List<LockState> states = new List<LockState>();
+
+            foreach (var current_lock in locks)
+            {
+                Byte sta = 0x00;
+                int iret = RFIDLIB.miniLib_Lock.Mini_GetDoorStatus(current_lock.LockHandle,
+                    1,
+                    (Byte)(index + 1),
+                    ref sta);
+                if (iret != 0)
+                    return new GetLockStateResult
+                    {
+                        Value = -1,
+                        ErrorInfo = $"getDoorStatus error (lock name='{current_lock.Name}' index={index})"
+                    };
+
+                states.Add(new LockState
+                {
+                    Name = current_lock.Name,
+                    State = (sta == 0x00 ? "open" : "close")
+                });
+            }
+
+            return new GetLockStateResult
+            {
+                Value = 0,
+                States = states
+            };
+        }
+
+        // 开门
+        public NormalResult OpenShelfLock(string lockName,
+            int index)
+        {
+            List<ShelfLock> locks = GetLocksByName(lockName);
+            if (locks.Count == 0)
+                return new NormalResult
+                {
+                    Value = -1,
+                    ErrorInfo = $"当前不存在名为 '{lockName}' 的门锁对象",
+                    ErrorCode = "lockNotFound"
+                };
+
+            List<LockState> states = new List<LockState>();
+
+            int count = 0;
+            foreach (var current_lock in locks)
+            {
+                int iret = RFIDLIB.miniLib_Lock.Mini_OpenDoor(current_lock.LockHandle,
+                    1,
+                    (Byte)(index + 1));
+                if (iret != 0)
+                    return new NormalResult
+                    {
+                        Value = -1,
+                        ErrorInfo = $"openDoor error (lock name='{current_lock.Name}' index={index})"
+                    };
+                count++;
+            }
+
+            return new NormalResult
+            {
+                Value = count
+            };
         }
 
     }

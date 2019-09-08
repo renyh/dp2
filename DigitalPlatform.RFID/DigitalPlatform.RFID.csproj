@@ -35,6 +35,7 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
+    <Reference Include="System.Runtime.Remoting" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -50,6 +51,7 @@
     <Compile Include="IRfidDriver.cs" />
     <Compile Include="Permutation.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TagList.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\DigitalPlatform\4.0\DigitalPlatform.csproj">

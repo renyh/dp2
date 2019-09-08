@@ -25,9 +25,13 @@ namespace RfidCenter
 
         public NormalResult GetState(string style)
         {
-            if (style == "clearCache")
+            if (style.StartsWith("clearCache"))
             {
-                SetLastUids("");
+                string session_id = StringUtil.GetParameterByPrefix(style, "clearCache");
+                if (string.IsNullOrEmpty(session_id))
+                    ClearLastUidTable();
+                else
+                    SetLastUids(session_id, "");
                 return new NormalResult();
             }
 
@@ -81,10 +85,11 @@ namespace RfidCenter
             return new ListReadersResult { Readers = readers.ToArray() };
         }
 
-        // 前一次 ListTags() 返回的 tag 数量
-        // static int _lastListCount = 0;
-        static string _lastUids = "";
-        static object _sync_lastuids = new object();
+        // static string _lastUids = "";
+
+        // session_id --> lastUids 对照表
+        static Hashtable _lastUidTable = new Hashtable();
+        // static object _sync_lastuids = new object();
 
         static string BuildUids(List<OneTag> tags)
         {
@@ -99,64 +104,135 @@ namespace RfidCenter
             return current.ToString();
         }
 
-        static void SetLastUids(string value)
+        // 清除 Hashtable
+        static void ClearLastUidTable()
         {
+            lock (_lastUidTable.SyncRoot)
+            {
+                _lastUidTable.Clear();
+            }
+        }
+
+        static void SetLastUids(string session_id, string value)
+        {
+            /*
             lock (_sync_lastuids)
             {
                 _lastUids = value;
             }
+            */
+            if (session_id == null)
+                session_id = "";
+            lock (_lastUidTable.SyncRoot)
+            {
+                // 防止 Hashtable 太大
+                if (_lastUidTable.Count > 1000)
+                    _lastUidTable.Clear();
+                _lastUidTable[session_id] = value;
+            }
         }
 
-        static bool CompareLastUids(string value)
+        static bool CompareLastUids(string session_id, string value)
         {
+            /*
             lock (_sync_lastuids)
             {
                 if (_lastUids != value)
                     return true;
                 return false;
             }
+            */
+            if (session_id == null)
+                session_id = "";
+            string lastUids = "";
+            lock (_lastUidTable.SyncRoot)
+            {
+                if (_lastUidTable.ContainsKey(session_id))
+                {
+                    lastUids = (string)_lastUidTable[session_id];
+                }
+            }
+
+            if (lastUids != value)
+                return true;
+            return false;
         }
 
         // 增加了无标签时延迟等待功能。敏捷响应
         public ListTagsResult ListTags(string reader_name, string style)
         {
-            TimeSpan length = TimeSpan.FromSeconds(2);
-            ListTagsResult result = null;
-            string current_uids = "";
-            DateTime start = DateTime.Now;
-            while (DateTime.Now - start < length
-                || result == null)
+            if (Program.Rfid.Pause)
+                return new ListTagsResult
+                {
+                    Value = -1,
+                    ErrorInfo = "RFID 功能处于暂停状态",
+                    ErrorCode = "paused"
+                };
+
+            Program.Rfid.IncApiCount();
+            try
             {
-                result = _listTags(reader_name, style);
+                if (Program.Rfid.Pause)
+                    return new ListTagsResult
+                    {
+                        Value = -1,
+                        ErrorInfo = "RFID 功能处于暂停状态",
+                        ErrorCode = "paused"
+                    };
 
-                if (result != null && result.Results != null)
-                    current_uids = BuildUids(result.Results);
-                else
-                    current_uids = "";
+                string session_id = StringUtil.GetParameterByPrefix(style, "session");
 
-                // 只要本次和上次 tag 数不同，立刻就返回
-                if (CompareLastUids(current_uids))
+                TimeSpan length = TimeSpan.FromSeconds(2);
+                ListTagsResult result = null;
+                string current_uids = "";
+                DateTime start = DateTime.Now;
+                while (DateTime.Now - start < length
+                    || result == null)
                 {
-                    SetLastUids(current_uids);
-                    return result;
+                    result = _listTags(reader_name, style);
+
+                    if (result != null && result.Results != null)
+                        current_uids = BuildUids(result.Results);
+                    else
+                        current_uids = "";
+
+                    // TODO: 这里的比较应该按照 Session 来进行
+                    // 只要本次和上次 tag 数不同，立刻就返回
+                    if (CompareLastUids(session_id, current_uids))
+                    {
+                        SetLastUids(session_id, current_uids);
+                        return result;
+                    }
+
+                    if (result.Value == -1)
+                        return result;
+                    /*
+                    // TODO: 如果本次和上次都是 2，是否立即返回？可否先对比一下 uid，有差别再返回?
+                    if (result.Results != null
+                        && result.Results.Count > 0)
+                    {
+                        SetLastUids(current_uids);
+                        return result;
+                    }
+                    */
+                    Thread.Sleep(10);
                 }
 
-                if (result.Value == -1)
-                    return result;
-                /*
-                // TODO: 如果本次和上次都是 2，是否立即返回？可否先对比一下 uid，有差别再返回?
-                if (result.Results != null
-                    && result.Results.Count > 0)
-                {
-                    SetLastUids(current_uids);
-                    return result;
-                }
-                */
-                Thread.Sleep(10);
+                SetLastUids(session_id, current_uids);
+                return result;
             }
-
-            SetLastUids(current_uids);
-            return result;
+            catch (Exception ex)
+            {
+                return new ListTagsResult
+                {
+                    Value = -1,
+                    ErrorInfo = $"ListTags() 出现异常:{ex.Message}"
+                };
+            }
+            finally
+            {
+                Program.Rfid.DecApiCount();
+            }
         }
         // parameters:
         //      style   如果为 "getTagInfo"，表示要在结果中返回 TagInfo
@@ -293,6 +369,9 @@ namespace RfidCenter
 #endif
         }
 
+        // result.Value
+        //      -1
+        //      0
         public GetTagInfoResult GetTagInfo(string reader_name,
             string uid)
         {
@@ -320,6 +399,9 @@ namespace RfidCenter
 
 
                 InventoryInfo info = new InventoryInfo { UID = uid };
+                // result.Value
+                //      -1
+                //      0
                 GetTagInfoResult result0 = Program.Rfid.GetTagInfo(reader.Name, info);
 
                 // 继续尝试往后寻找
@@ -412,6 +494,7 @@ bool enable)
             {
                 FindTagResult result = Program.Rfid.FindTagByPII(
                     reader_name,
+                    InventoryInfo.ISO15693, // 只有 ISO15693 才有 EAS (2019/8/28)
                     parts[1]);
                 if (result.Value != 1)
                     return new NormalResult
@@ -597,9 +680,13 @@ new_password);
                 message = "RFID 发送打开";
             else
                 message = "RFID 发送关闭";
-            Program.MainForm.OutputHistory(message, 0);
 
-            Program.MainForm?.Speak(message);
+
+            Task.Run(() =>
+            {
+                Program.MainForm?.OutputHistory(message, 0);
+                Program.MainForm?.Speak(message);
+            });
 
             return new NormalResult();
         }
@@ -651,6 +738,13 @@ new_password);
                 Program.MainForm.OutputHistory($"当前读卡器数量 {Program.Rfid.Readers.Count}。包括: \r\n{StringUtil.MakePathList(names, "\r\n")}", 0);
             }
 
+            if (Program.Rfid.ShelfLocks.Count > 0)
+            {
+                List<string> names = new List<string>();
+                Program.Rfid.ShelfLocks.ForEach((o) => names.Add(o.Name));
+                Program.MainForm.OutputHistory($"当前锁控数量 {Program.Rfid.ShelfLocks.Count}。包括: \r\n{StringUtil.MakePathList(names, "\r\n")}", 0);
+            }
+
             _cancelInventory = new CancellationTokenSource();
             bool bFirst = true;
             try
@@ -674,12 +768,25 @@ new_password);
                         if (reader == null)
                             continue;
 
+                        if (Program.Rfid.Pause)
+                            continue;
+
                         if (string.IsNullOrEmpty(Program.Rfid.State) == false)
                             break;
 
-                        InventoryResult inventory_result = Program.Rfid.Inventory(
-                            reader.Name, bFirst ? "" : "only_new");
-                        // bFirst = false;
+                        InventoryResult inventory_result = null;
+                        //Program.Rfid.IncApiCount();
+                        try
+                        {
+                            inventory_result = Program.Rfid.Inventory(
+      reader.Name, bFirst ? "" : "only_new");
+                            // bFirst = false;
+                        }
+                        finally
+                        {
+                            //Program.Rfid.DecApiCount();
+                        }
+
                         if (inventory_result.Value == -1)
                         {
                             _compactLog?.Add("*** 读卡器 {0} 点选标签时出错: {1}",
@@ -699,6 +806,7 @@ new_password);
                             //uid_table[info.UID] = reader.Name;
                             AddToTagList(reader.Name, info.UID, info.DsfID, info.Protocol);
                         }
+
                     }
                 }
             }
